@@ -70,6 +70,9 @@ tailscale serve --bg --https=39847 http://127.0.0.1:39847
 Your phone can then use `https://<your-pc>.<your-tailnet>.ts.net:39847`, which Nightfall shows
 alongside the home address.
 
+No Tailscale yet? On a PC without it, the Nightfall window in the Start menu has **Use it away
+from home**. It links to the Windows download and shows QR codes for the iPhone and Android apps.
+
 > [!TIP]
 > The Tailscale address makes https seamless: its certificate is one every phone already trusts,
 > so there's no certificate to install and Chrome on Android offers **Install** straight away. It
@@ -88,6 +91,7 @@ addresses to open on your phone, and lets you:
 - open it in this PC's browser,
 - stop it or start it again,
 - change the port, if another program needs 39847,
+- get Tailscale, if this PC doesn't have it,
 - remove it (or use **Settings › Apps**).
 
 ## Scenes

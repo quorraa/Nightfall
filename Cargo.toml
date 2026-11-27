@@ -1,6 +1,6 @@
 [package]
 name = "nightfall"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2021"
 description = "Turn a Windows PC's monitors off from your phone"
 license = "MIT"
