@@ -4,9 +4,10 @@
 //!   POST /api/dim     {"delay": s}   screens off now, or in s seconds (0 to 6 h)
 //!   POST /api/cancel                 drop the pending timer
 //!   POST /api/wake                   screens back on
+//!   GET  /nightfall.crt              the certificate authority phones install for https
 //!
 //! Everything else is the page: web/ next to the .exe when it is there, otherwise the copy
-//! built into the .exe.
+//! built into the .exe. http and https share the port (see tls.rs).
 
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -16,6 +17,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::bedtime::BEDTIME;
 use crate::json::{self, Value};
+use crate::tls;
 
 mod assets {
     include!(concat!(env!("OUT_DIR"), "/assets.rs"));
@@ -142,49 +144,112 @@ fn reason(code: u16) -> &'static str {
     }
 }
 
+/// A connection, plain or https. Both arrive on the same port.
+enum Conn {
+    Plain(TcpStream),
+    Tls(Box<tls::Stream>),
+}
+
+impl Conn {
+    fn tcp(&self) -> &TcpStream {
+        match self {
+            Conn::Plain(s) => s,
+            Conn::Tls(s) => s.tcp(),
+        }
+    }
+}
+
+impl Read for Conn {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Conn::Plain(s) => s.read(buf),
+            Conn::Tls(s) => s.read(buf),
+        }
+    }
+}
+
+impl Write for Conn {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Conn::Plain(s) => s.write(buf),
+            Conn::Tls(s) => s.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Conn::Plain(s) => s.flush(),
+            Conn::Tls(s) => s.flush(),
+        }
+    }
+}
+
+/// A TLS connection starts with a handshake record (0x16); an http request starts with a letter.
+const TLS_HANDSHAKE: u8 = 0x16;
+
 fn connection(stream: TcpStream) {
     let _ = stream.set_read_timeout(Some(IDLE));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
     let _ = stream.set_nodelay(true);
     let Ok(peer) = stream.peer_addr() else { return };
-    let Ok(read_half) = stream.try_clone() else { return };
-    let mut reader = BufReader::new(read_half);
-    let mut out = stream;
+    let mut first = [0u8; 1];
+    if !matches!(stream.peek(&mut first), Ok(1)) {
+        return; // the client closed, or went quiet
+    }
+    let conn = if first[0] == TLS_HANDSHAKE {
+        let Some(creds) = tls::credentials() else { return };
+        if !client_allowed(peer.ip()) {
+            crate::warning!("refused {}", peer.ip());
+            return;
+        }
+        match tls::Stream::accept(stream, creds) {
+            Ok(s) => Conn::Tls(Box::new(s)),
+            Err(e) => {
+                // Usually a phone that doesn't trust the certificate yet.
+                crate::info!("https handshake with {} failed: {e}", peer.ip().to_canonical());
+                return;
+            }
+        }
+    } else {
+        Conn::Plain(stream)
+    };
+    let mut reader = BufReader::new(conn);
     loop {
         let req = match read_request(&mut reader) {
             Ok(Some(req)) => req,
             Ok(None) => return, // the client closed, or went quiet
             Err(code) => {
-                let _ = send(&mut out, "", Response::page_error(code, reason(code)).closing(), false);
-                return finish(out);
+                let _ = send(reader.get_mut(), "", Response::page_error(code, reason(code)).closing(), false);
+                return finish(reader.into_inner());
             }
         };
         if !client_allowed(peer.ip()) {
             crate::warning!("refused {}", peer.ip());
             let resp = Response::page_error(403, "Request forbidden.").closing();
-            let _ = send(&mut out, req.path(), resp, req.method == "HEAD");
-            return finish(out);
+            let _ = send(reader.get_mut(), req.path(), resp, req.method == "HEAD");
+            return finish(reader.into_inner());
         }
         let mut resp = handle(&req, &mut reader);
         if req.wants_close() {
             resp.close = true;
         }
         let close = resp.close;
-        if send(&mut out, req.path(), resp, req.method == "HEAD").is_err() || close {
-            return finish(out);
+        if send(reader.get_mut(), req.path(), resp, req.method == "HEAD").is_err() || close {
+            return finish(reader.into_inner());
         }
     }
 }
 
 /// Close politely: stop sending, then let the client's leftovers drain so Windows
 /// doesn't reset the connection before the reply arrives.
-fn finish(stream: TcpStream) {
+fn finish(conn: Conn) {
+    let stream = conn.tcp();
     let _ = stream.shutdown(Shutdown::Write);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
-    let _ = io::copy(&mut (&stream).take(64 * 1024), &mut io::sink());
+    let _ = io::copy(&mut stream.take(64 * 1024), &mut io::sink());
 }
 
-fn read_line(reader: &mut BufReader<TcpStream>) -> Result<Option<String>, u16> {
+fn read_line(reader: &mut BufReader<Conn>) -> Result<Option<String>, u16> {
     let mut line = Vec::new();
     match reader.by_ref().take(MAX_HEADER_LINE).read_until(b'\n', &mut line) {
         Ok(0) => return Ok(None),
@@ -200,7 +265,7 @@ fn read_line(reader: &mut BufReader<TcpStream>) -> Result<Option<String>, u16> {
     Ok(Some(String::from_utf8_lossy(&line).into_owned()))
 }
 
-fn read_request(reader: &mut BufReader<TcpStream>) -> Result<Option<Request>, u16> {
+fn read_request(reader: &mut BufReader<Conn>) -> Result<Option<Request>, u16> {
     let mut first = String::new();
     for _ in 0..4 {
         // tolerate stray blank lines between requests
@@ -238,7 +303,7 @@ fn read_request(reader: &mut BufReader<TcpStream>) -> Result<Option<Request>, u1
     Ok(Some(Request { method: method.into(), target: target.into(), http11, headers }))
 }
 
-fn handle(req: &Request, reader: &mut BufReader<TcpStream>) -> Response {
+fn handle(req: &Request, reader: &mut BufReader<Conn>) -> Response {
     match req.method.as_str() {
         "GET" | "HEAD" => {
             // A body on a GET is allowed but meaningless; skip it to keep the connection usable.
@@ -264,10 +329,30 @@ fn get(req: &Request) -> Response {
     if req.target.starts_with("/api/") {
         return Response::error(404, "Unknown endpoint.");
     }
+    if path == CA_PATH {
+        return match tls::ca_certificate() {
+            Some(der) => Response {
+                code: 200,
+                content_type: "application/x-x509-ca-cert",
+                body: Body::Owned(der),
+                headers: vec![("Content-Disposition", "attachment; filename=\"Nightfall.crt\"".into())],
+                close: false,
+            },
+            None => Response::page_error(404, "https isn't ready on this PC; see the log."),
+        };
+    }
+    if path == "/setup" {
+        let mut resp = Response::page_error(301, "Moved Permanently.");
+        resp.headers.push(("Location", "/setup.html".into()));
+        return resp;
+    }
     static_file(req)
 }
 
-fn post(req: &Request, reader: &mut BufReader<TcpStream>) -> Response {
+/// Where phones download the certificate authority that makes https work.
+pub const CA_PATH: &str = "/nightfall.crt";
+
+fn post(req: &Request, reader: &mut BufReader<Conn>) -> Response {
     // A JSON content type forces a CORS preflight, which we never answer, so other
     // websites open in a browser on the LAN can't fire these endpoints.
     if !req.header("content-type").unwrap_or("").starts_with("application/json") {
@@ -475,7 +560,7 @@ fn static_file(req: &Request) -> Response {
 
 // --- Writing replies -----------------------------------------------------------------
 
-fn send(out: &mut TcpStream, path: &str, resp: Response, head_only: bool) -> io::Result<()> {
+fn send(out: &mut Conn, path: &str, resp: Response, head_only: bool) -> io::Result<()> {
     let body: &[u8] = match &resp.body {
         Body::Owned(v) => v,
         Body::Static(s) => s,

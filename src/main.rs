@@ -13,11 +13,13 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 
 mod bedtime;
+mod cert;
 mod guard;
 mod http;
 mod json;
 mod log;
 mod setup;
+mod tls;
 mod win;
 
 use std::path::PathBuf;
@@ -105,5 +107,6 @@ fn main() {
         None => info!("serving the built-in page"),
     }
     win::start_display_watcher();
+    tls::start(config.host.clone());
     http::serve(listener);
 }

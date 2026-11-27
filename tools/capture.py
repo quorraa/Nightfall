@@ -2,8 +2,9 @@
 
 Needs a dry-run server (so the slider doesn't touch your screens), Playwright for Python and ffmpeg:
 
-    $env:NIGHTFALL_DRY_RUN='1'; $env:NIGHTFALL_PORT='39848'; python server.py
+    .\\nightfall.exe --port 39848 --dry-run
     uv run --no-project --with playwright python tools/capture.py --out docs/media --frames <temp dir>
+    uv run --no-project --with playwright python tools/capture.py --scenes    # just the scene stills
 
 The page runs with ?capture, so the scene advances exactly one step per saved frame and the GIF
 plays smoothly however slowly the browser renders.
@@ -104,6 +105,20 @@ def still(browser, base, name, w, h, dsf, still_dir: Path):
     ctx.close()
 
 
+SCENES = ("lake", "coast", "dunes")
+
+
+def scene_stills(browser, base, still_dir: Path):
+    """A phone-sized still of each scene with its light on: scene-<name>.jpg."""
+    for scene in SCENES:
+        ctx, page = open_page(browser, f"{base}/?capture&seed=7&scene={scene}", 440, 956, 2, True)
+        for _ in range(14):
+            page.evaluate("nightfall.step(1/15)")
+        page.screenshot(path=str(still_dir / f"scene-{scene}.jpg"), type="jpeg", quality=88)
+        ctx.close()
+        print(scene, "done")
+
+
 def to_gif(frames: Path, gif: Path, width: int, fps: int = 12):
     # Frames are 1/15 s of scene time apart; dropping to 12 fps keeps the GIF under ~6 MB.
     # Ordered dither and per-rectangle updates compress far better than error diffusion here.
@@ -119,11 +134,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:39848")
     ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parent.parent / "docs" / "media")
-    ap.add_argument("--frames", type=Path, required=True, help="scratch folder for PNG frames")
+    ap.add_argument("--frames", type=Path, help="scratch folder for PNG frames")
+    ap.add_argument("--scenes", action="store_true", help="only the stills of each scene")
     a = ap.parse_args()
+    if not a.scenes and not a.frames:
+        ap.error("--frames is needed to record the GIFs")
     a.out.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(args=["--use-angle=d3d11", "--ignore-gpu-blocklist", "--enable-gpu"])
+        if a.scenes:
+            scene_stills(browser, a.base, a.out)
+            browser.close()
+            return
         portrait = record(browser, a.base, "portrait", 440, 956, 2, True, a.frames, a.out)
         landscape = record(browser, a.base, "landscape", 956, 440, 2, True, a.frames, a.out)
         still(browser, a.base, "desktop", 1440, 900, 1, a.out)

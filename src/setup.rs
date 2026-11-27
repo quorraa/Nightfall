@@ -632,7 +632,8 @@ fn tailscale(port: u16) -> Tailscale {
 
 /// Where to open Nightfall on the phone, as dialog text with links.
 fn where_to_open(port: u16) -> String {
-    let mut text = match lan_address() {
+    let lan = lan_address();
+    let mut text = match lan {
         Some(ip) => format!("On your phone, open\n{}", link(&format!("http://{ip}:{port}"))),
         None => "This PC doesn't seem to be on a home network right now.".to_string(),
     };
@@ -645,7 +646,15 @@ fn where_to_open(port: u16) -> String {
         }
         Tailscale::Absent => {}
     }
-    text + "\n\nOn an iPhone, add it to your Home Screen from Safari's Share menu."
+    text += "\n\nTo keep it on your Home Screen: on an iPhone, Safari's Share menu › Add to Home Screen.";
+    if let Some(ip) = lan {
+        text += &format!(
+            " Chrome on Android only installs it from an https:// address, so on Android open {} once: it \
+             has the phone trust this PC, then Chrome's menu › Add to Home screen › Install.",
+            link(&format!("http://{ip}:{port}/setup"))
+        );
+    }
+    text
 }
 
 // --- Running things ------------------------------------------------------------------
@@ -1098,7 +1107,7 @@ fn uninstall() -> io::Result<()> {
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         let _ = fs::remove_dir_all(PathBuf::from(local).join("Nightfall"));
     }
-
+    crate::cert::delete_keys(); // the https certificate authority's and server's keys
     // The program can't delete itself while it (or the window that asked) is running, so a
     // hidden helper keeps trying for a few minutes, and Windows finishes the job at the next
     // restart if it still has to. Only ever touch our own folder and file.

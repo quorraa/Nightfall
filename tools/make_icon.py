@@ -1,6 +1,8 @@
 """Draw the app icon (crescent on a night gradient) with no image library.
 
-    web/icon-180.png        the phone's home-screen icon: a full square (iOS rounds it)
+    web/icon-<N>.png        the phone's home-screen icon: a full square, which iOS rounds and
+                            Android crops to its own shape (the manifest marks it maskable);
+                            Chrome needs 192 and 512 to offer Install
     assets/icon-<N>.png     the Windows icon at each size it is shown at, with rounded
                             corners; build.rs puts these into nightfall.exe
 """
@@ -13,6 +15,7 @@ from pathlib import Path
 SS = 4  # 4x4 supersampling
 ROOT = Path(__file__).resolve().parent.parent
 WINDOWS_SIZES = (16, 20, 24, 32, 40, 48, 64, 256)
+PHONE_SIZES = (180, 192, 512)
 
 
 def mix(a, b, t):
@@ -83,9 +86,10 @@ def render(size, rounded):
 
 
 def main():
-    out = ROOT / "web" / "icon-180.png"
-    out.write_bytes(render(180, rounded=False))
-    print(out)
+    for size in PHONE_SIZES:
+        out = ROOT / "web" / f"icon-{size}.png"
+        out.write_bytes(render(size, rounded=False))
+        print(out)
     (ROOT / "assets").mkdir(exist_ok=True)
     for size in WINDOWS_SIZES:
         out = ROOT / "assets" / f"icon-{size}.png"

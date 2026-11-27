@@ -1,12 +1,12 @@
 [package]
 name = "nightfall"
-version = "2.1.1"
+version = "2.2.0"
 edition = "2021"
 description = "Turn a Windows PC's monitors off from your phone"
 license = "MIT"
 build = "build.rs"
 
-# No dependencies: the Rust standard library and Windows' own user32/kernel32.
+# No dependencies: the Rust standard library and Windows itself (user32, kernel32, SChannel, CNG).
 
 [profile.release]
 opt-level = "s"

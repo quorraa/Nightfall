@@ -230,6 +230,11 @@ sceneList.addEventListener('keydown', (e) => {
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.dataset.sheet) openScenes(false); });
 showScene(sceneId);
 if (SCENES.length < 2 || !scene) $('#sceneBtn').hidden = true;
+// Chrome on Android installs the app only over https, which needs the phone to trust this PC
+// first; setup.html walks through that.
+if (/Android/.test(navigator.userAgent) && location.protocol === 'http:' && !matchMedia('(display-mode: standalone)').matches) {
+  $('#installLink').hidden = false;
+}
 
 const actions = {
   wake: () => run('/api/wake', {}, () => { setMode('idle'); say(state.dryRun ? 'Test mode: nothing changed.' : 'Screens woken.'); }),
