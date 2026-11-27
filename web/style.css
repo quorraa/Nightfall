@@ -1,0 +1,350 @@
+:root {
+  --ink: #05060f;
+  --night: #1a1d3d;
+  --pearl: #ece6d4;
+  --star: #dfe4ff;
+  --muted: rgba(223, 228, 255, 0.6);
+  --hair: rgba(223, 228, 255, 0.13);
+  --wash: rgba(223, 228, 255, 0.07);
+  --lamp: #ffbf78;
+  --mint: #a6e3c8;
+  --serif: ui-serif, "New York", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --round: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+
+* { box-sizing: border-box; margin: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--ink);
+  color: var(--star);
+  font-family: var(--round);
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+body { position: relative; }
+
+/* Home-screen app: fill the whole screen (app.js sets --app-h from the screen size). */
+@media (display-mode: standalone) {
+  html, body { height: var(--app-h, 100lvh); }
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:focus-visible { outline: 2px solid var(--pearl); outline-offset: 3px; }
+
+svg { display: block; }
+
+#sky {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.veil {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 45%;
+  background: linear-gradient(to top, rgba(3, 4, 12, 0.55), rgba(3, 4, 12, 0));
+  pointer-events: none;
+}
+
+/* Header */
+.top {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: calc(var(--safe-t) + 14px) calc(var(--safe-r) + 22px) 0 calc(var(--safe-l) + 22px);
+  pointer-events: none;
+  transition: opacity 1.6s var(--ease);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--serif);
+  font-size: 17px;
+  letter-spacing: 0.01em;
+  color: var(--pearl);
+}
+.brand svg { width: 16px; height: 16px; fill: var(--pearl); }
+
+.host {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.host i {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: background 0.4s, box-shadow 0.4s;
+}
+.host[data-state="online"] i { background: var(--mint); box-shadow: 0 0 10px rgba(166, 227, 200, 0.7); }
+.host[data-state="offline"] i { background: var(--lamp); }
+
+/* Hero: a bedside clock */
+.hero {
+  position: absolute;
+  top: calc(var(--safe-t) + 11vh);
+  left: calc(var(--safe-l) + 24px);
+  right: 40%;
+  pointer-events: none;
+  transition: opacity 2.4s var(--ease), transform 2.4s var(--ease);
+}
+.clock {
+  font-family: var(--serif);
+  font-size: clamp(64px, 21vw, 120px);
+  line-height: 0.95;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  font-variant-numeric: lining-nums tabular-nums;
+  color: var(--pearl);
+  text-shadow: 0 0 40px rgba(236, 230, 212, 0.18);
+}
+.clock small {
+  font-size: 0.24em;
+  letter-spacing: 0.02em;
+  margin-left: 0.25em;
+  color: var(--muted);
+}
+.line {
+  margin-top: 14px;
+  font-family: var(--serif);
+  font-size: 19px;
+  line-height: 1.4;
+  color: var(--muted);
+  max-width: 17em;
+}
+
+/* Bottom panel: it sits on the dark near hill, no card */
+.panel {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  margin: 0 auto;
+  max-width: 460px;
+  padding: 0 calc(max(var(--safe-r), 0px) + 20px) calc(max(var(--safe-b), 12px) + 18px) calc(max(var(--safe-l), 0px) + 20px);
+  display: grid;
+}
+.view {
+  grid-area: 1 / 1;
+  align-self: end;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(14px);
+  transition: opacity 0.7s var(--ease), transform 0.7s var(--ease), visibility 0s linear 0.7s;
+}
+body[data-mode="idle"] .view-idle,
+body[data-mode="pending"] .view-pending,
+body[data-mode="night"] .view-night {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 0.9s var(--ease) 0.15s, transform 0.9s var(--ease) 0.15s, visibility 0s;
+}
+body[data-mode="night"] .view-night { transition-delay: 2.2s; transition-duration: 2s; }
+
+/* When */
+.when {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.when button {
+  flex: 1;
+  padding: 10px 0;
+  border-radius: 999px;
+  font-size: 15px;
+  color: var(--muted);
+  transition: color 0.3s, background 0.3s;
+}
+.when button[aria-checked="true"] {
+  color: var(--pearl);
+  background: var(--wash);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+/* Slide to turn off */
+.slider {
+  position: relative;
+  height: 68px;
+  border-radius: 34px;
+  background: rgba(10, 12, 32, 0.55);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+  touch-action: none;
+}
+.slider-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--x, 0px) + 68px);
+  border-radius: 34px;
+  background: linear-gradient(90deg, rgba(58, 66, 150, 0.15), rgba(80, 90, 190, 0.38));
+  opacity: min(1, calc(var(--p, 0) * 4));
+}
+.slider-label {
+  position: absolute;
+  inset: 0 0 0 68px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: transparent;
+  background: linear-gradient(100deg, var(--muted) 40%, var(--pearl) 50%, var(--muted) 60%) 0 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: shimmer 4.5s linear infinite;
+  opacity: calc(1 - var(--p, 0) * 1.6);
+  pointer-events: none;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -50% 0; } }
+
+.knob {
+  position: absolute;
+  top: 6px; left: 6px;
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fbf7ea, var(--pearl) 60%, #d6cfba);
+  box-shadow: 0 0 26px rgba(236, 230, 212, 0.28), 0 2px 8px rgba(0, 0, 0, 0.4);
+  display: grid;
+  place-items: center;
+  transform: translateX(var(--x, 0px));
+  touch-action: none;
+}
+.knob svg { width: 24px; height: 24px; fill: var(--night); }
+.slider.springing .knob,
+.slider.springing .slider-fill { transition: transform 0.5s var(--ease), width 0.5s var(--ease); }
+
+/* Footer row */
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  margin-top: 10px;
+}
+.text-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 4px;
+  font-size: 15px;
+  color: var(--muted);
+  transition: color 0.3s;
+}
+.text-btn:active { color: var(--pearl); }
+.text-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.message {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--muted);
+  text-align: right;
+  transition: opacity 0.5s;
+}
+.message[data-tone="error"] { color: var(--lamp); }
+
+/* Pending */
+.pending-label { font-size: 15px; color: var(--muted); }
+.countdown {
+  font-family: var(--serif);
+  font-size: 72px;
+  line-height: 1.05;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--pearl);
+  margin: 4px 0 22px;
+}
+.row { display: flex; gap: 10px; }
+.btn {
+  flex: 1;
+  height: 54px;
+  border-radius: 27px;
+  font-size: 16px;
+  transition: transform 0.2s var(--ease), background 0.3s;
+}
+.btn:active { transform: scale(0.97); }
+.btn.ghost { box-shadow: inset 0 0 0 1px var(--hair); background: rgba(10, 12, 32, 0.45); }
+.btn.pearl { background: var(--pearl); color: var(--night); }
+
+/* Night */
+.goodnight {
+  font-family: var(--serif);
+  font-size: 46px;
+  line-height: 1.1;
+  color: var(--pearl);
+  opacity: 0.9;
+}
+.sub { margin: 8px 0 26px; font-size: 15px; color: var(--muted); }
+body[data-mode="night"] .btn.ghost { color: var(--muted); }
+body[data-mode="night"] .hero { opacity: 0.16; transform: translateY(-6px); }
+body[data-mode="night"] .top { opacity: 0.4; }
+
+@media (orientation: landscape) and (min-width: 700px) {
+  .hero { top: calc(var(--safe-t) + 14vh); left: calc(var(--safe-l) + 6vw); }
+  .clock { font-size: clamp(80px, 11vw, 150px); }
+}
+
+/* Phone on its side: bedside clock on the left, controls in a column on the right */
+@media (orientation: landscape) and (max-height: 520px) {
+  .veil {
+    inset: 0 0 0 auto;
+    width: 60%;
+    height: auto;
+    background: linear-gradient(to left, rgba(3, 4, 12, 0.5), rgba(3, 4, 12, 0));
+  }
+  .hero {
+    top: calc(var(--safe-t) + 17vh);
+    left: calc(var(--safe-l) + 24px);
+    right: auto;
+    width: 44vw;
+  }
+  .clock { font-size: clamp(64px, 25vh, 120px); }
+  .line { margin-top: 10px; font-size: 17px; }
+  .panel {
+    top: 0;
+    left: auto;
+    right: 0;
+    width: min(420px, 46vw);
+    max-width: none;
+    margin: 0;
+    padding: calc(var(--safe-t) + 44px) calc(var(--safe-r) + 24px) calc(var(--safe-b) + 12px) 0;
+  }
+  .view { align-self: center; }
+  .when { margin-bottom: 12px; }
+  .foot { margin-top: 6px; }
+  .countdown { font-size: 60px; margin-bottom: 16px; }
+  .goodnight { font-size: 40px; }
+  .sub { margin-bottom: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slider-label { animation: none; background-position: 50% 0; }
+  .view, .hero, .top { transition-duration: 0.01s !important; transition-delay: 0s !important; }
+}
