@@ -49,7 +49,7 @@ cloud: your phone talks straight to your PC.
    - **Android**: Chrome only installs apps from an `https://` address, so first open
      `http://<your-pc>:39847/setup` (or **Scenes › Install as app**). It has your phone trust your
      PC once, then opens `https://<your-pc>:39847`, where Chrome's menu › Add to Home screen ›
-     **Install** works.
+     **Install** works. With [Tailscale](#away-from-home) you can skip that setup.
 
 > [!NOTE]
 > Nightfall isn't code-signed yet, so the first time you run it Windows may say "Windows protected
@@ -69,6 +69,12 @@ tailscale serve --bg --https=39847 http://127.0.0.1:39847
 
 Your phone can then use `https://<your-pc>.<your-tailnet>.ts.net:39847`, which Nightfall shows
 alongside the home address.
+
+> [!TIP]
+> The Tailscale address makes https seamless: its certificate is one every phone already trusts,
+> so there's no certificate to install and Chrome on Android offers **Install** straight away. It
+> only works while Tailscale is connected on both ends, the PC and the phone. With either one
+> off, use the home address instead.
 
 ## Using it
 
