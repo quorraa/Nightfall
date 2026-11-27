@@ -422,6 +422,19 @@ body[data-mode="night"] .top { opacity: 0.4; }
   .scene-list .desc { display: none; }
 }
 
+/* Short windows of any shape: a compact scene sheet, and the clock steps aside while it's open. */
+@media (max-height: 560px) {
+  body[data-sheet="scenes"] .hero {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.4s var(--ease), visibility 0s linear 0.4s;
+  }
+  .sheet-title { font-size: 20px; margin-bottom: 6px; }
+  .scene-list { gap: 4px; margin-bottom: 8px; }
+  .scene-list button { min-height: 44px; padding: 5px 14px; }
+  .scene-list .desc { display: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .slider-label { animation: none; background-position: 50% 0; }
   .view, .hero, .top { transition-duration: 0.01s !important; transition-delay: 0s !important; }

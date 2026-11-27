@@ -78,7 +78,10 @@ setInterval(renderClock, 1000);
 const phoneLandscape = matchMedia('(orientation: landscape) and (max-height: 520px) and (min-aspect-ratio: 3/2)');
 function syncGround() {
   if (phoneLandscape.matches) return sceneDo((s) => s.setGround(0.8));
-  const top = ui.panel.getBoundingClientRect().top;
+  // The tallest of the views that share the panel, leaving out the scene sheet: it is a
+  // passing overlay, and framing the land above it would lift the horizon for good.
+  const views = ui.panel.querySelectorAll(':scope > .view:not(.view-scenes)');
+  const top = Math.min(...[...views].map((v) => v.getBoundingClientRect().top));
   const h = document.getElementById('sky').clientHeight || document.body.clientHeight || window.innerHeight;
   sceneDo((s) => s.setGround(Math.max(0.45, Math.min(0.85, top / h))));
 }

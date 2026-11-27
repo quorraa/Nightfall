@@ -126,6 +126,7 @@ export async function audit(frame, devices = DEVICES, onResult = () => {}, scene
       for (const sel of ['#clock', '#line', '.top']) {
         if (mode === 'night' && sel === '#line') continue;
         const el = doc.querySelector(sel);
+        if (win.getComputedStyle(el).visibility === 'hidden') continue; // stepped aside for this view
         if (overlaps(sel === '.top' ? R(el) : textBox(el), controls)) add(`${sel} overlaps the controls`);
       }
       if (overlaps(textBox(doc.querySelector('#clock')), R(doc.querySelector('.top')))) add('clock overlaps the header');
