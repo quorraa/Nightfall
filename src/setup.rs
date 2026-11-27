@@ -1,20 +1,22 @@
 //! Installing, updating, checking on and removing Nightfall, from the .exe itself.
 //!
 //!   nightfall.exe                  not installed, or a different version: offer to install it;
-//!                                  installed: say whether it's running and where to open it
+//!                                  installed: the manage window (where to open it, open it
+//!                                  here, stop or start it, change the port, remove it)
 //!   nightfall.exe --install [port] install (or reinstall) without asking which
 //!   nightfall.exe --uninstall      what Settings › Apps runs
 //!
 //! Installing copies the .exe to Program Files\Nightfall, registers a Task Scheduler task that
-//! starts it with --serve at sign-in, opens the port to the local subnet in Windows Firewall
-//! and adds an entry to Settings › Apps. That part runs elevated (one UAC prompt), in a second
-//! copy of this program started with --do-install / --do-uninstall.
+//! starts it with --serve at sign-in, opens the port to the local subnet in Windows Firewall,
+//! adds Nightfall to the Start menu (which opens the manage window) and to Settings › Apps.
+//! That part runs elevated (one UAC prompt), in a second copy of this program started with
+//! --do-install / --do-uninstall. Changing the port is a reinstall with the new port.
 #![allow(non_snake_case, clippy::upper_case_acronyms)]
 
 use std::ffi::c_void;
 use std::fs;
-use std::io;
-use std::net::{IpAddr, SocketAddr, TcpStream, UdpSocket};
+use std::io::{self, Read, Write};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -97,7 +99,26 @@ extern "system" {
     fn SendMessageW(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize;
     fn LoadImageW(instance: isize, name: *const u16, kind: u32, cx: i32, cy: i32, flags: u32) -> isize;
     fn GetSystemMetrics(index: i32) -> i32;
+    fn DialogBoxIndirectParamW(instance: isize, template: *const c_void, parent: HWND, proc_: DialogProc, param: isize) -> isize;
+    fn EndDialog(hwnd: HWND, result: isize) -> BOOL;
+    fn GetDlgItem(hwnd: HWND, id: i32) -> HWND;
+    fn GetDlgItemInt(hwnd: HWND, id: i32, ok: *mut BOOL, signed: BOOL) -> u32;
+    fn SetDlgItemInt(hwnd: HWND, id: i32, value: u32, signed: BOOL) -> BOOL;
+    fn SendDlgItemMessageW(hwnd: HWND, id: i32, msg: u32, w: usize, l: isize) -> isize;
+    fn SetFocus(hwnd: HWND) -> HWND;
+    fn MessageBeep(kind: u32) -> BOOL;
 }
+
+type DialogProc = unsafe extern "system" fn(HWND, u32, usize, isize) -> isize;
+
+#[link(name = "ole32")]
+extern "system" {
+    fn CoInitializeEx(reserved: *const c_void, coinit: u32) -> i32;
+    fn CoCreateInstance(clsid: *const Guid, outer: *mut c_void, context: u32, iid: *const Guid, out: *mut *mut c_void) -> i32;
+}
+
+#[repr(C)]
+struct Guid(u32, u16, u16, [u8; 8]);
 
 #[link(name = "kernel32")]
 extern "system" {
@@ -213,10 +234,11 @@ struct Dialog<'a> {
     content: &'a str,
     footer: Option<&'a str>,
     icon: Icon,
-    /// Custom buttons, in order; the first is the default.
+    /// Custom buttons, in order; the first is the default. When any label has a second line
+    /// (after \n), they're shown as command links, with that line as the note.
     buttons: &'a [(i32, &'a str)],
-    /// A custom button that gets the UAC shield.
-    shield: Option<i32>,
+    /// Custom buttons that get the UAC shield.
+    shield: &'a [i32],
     /// Common buttons: CANCEL or CLOSE.
     common: u32,
 }
@@ -227,30 +249,34 @@ const IDCANCEL: i32 = 2;
 const IDCLOSE: i32 = 8;
 
 struct CallbackData {
-    shield: i32,
+    shield: Vec<i32>,
+}
+
+/// Show Nightfall's icon in a window's title bar and taskbar button.
+unsafe fn set_window_icons(hwnd: HWND) {
+    const WM_SETICON: u32 = 0x80;
+    let instance = GetModuleHandleW(null());
+    for (which, metric) in [(0usize, 49), (1usize, 11)] {
+        // ICON_SMALL with SM_CXSMICON, ICON_BIG with SM_CXICON
+        let size = GetSystemMetrics(metric);
+        let icon = LoadImageW(instance, 1 as *const u16, 1, size, size, 0);
+        if icon != 0 {
+            SendMessageW(hwnd, WM_SETICON, which, icon);
+        }
+    }
 }
 
 unsafe extern "system" fn dialog_callback(hwnd: HWND, msg: u32, _w: usize, l: isize, data: isize) -> i32 {
     const TDN_CREATED: u32 = 0;
     const TDN_HYPERLINK_CLICKED: u32 = 3;
     const TDM_SET_BUTTON_ELEVATION_REQUIRED_STATE: u32 = 0x400 + 115;
-    const WM_SETICON: u32 = 0x80;
     match msg {
         TDN_CREATED => {
             let data = &*(data as *const CallbackData);
-            if data.shield != 0 {
-                SendMessageW(hwnd, TDM_SET_BUTTON_ELEVATION_REQUIRED_STATE, data.shield as usize, 1);
+            for id in &data.shield {
+                SendMessageW(hwnd, TDM_SET_BUTTON_ELEVATION_REQUIRED_STATE, *id as usize, 1);
             }
-            // The title bar and taskbar show Nightfall's icon too.
-            let instance = GetModuleHandleW(null());
-            for (which, metric) in [(0usize, 49), (1usize, 11)] {
-                // ICON_SMALL with SM_CXSMICON, ICON_BIG with SM_CXICON
-                let size = GetSystemMetrics(metric);
-                let icon = LoadImageW(instance, 1 as *const u16, 1, size, size, 0);
-                if icon != 0 {
-                    SendMessageW(hwnd, WM_SETICON, which, icon);
-                }
-            }
+            set_window_icons(hwnd);
         }
         TDN_HYPERLINK_CLICKED => {
             ShellExecuteW(hwnd, wide("open").as_ptr(), l as *const u16, null(), null(), 1);
@@ -281,7 +307,8 @@ fn show(d: &Dialog) -> i32 {
     let labels: Vec<Vec<u16>> = d.buttons.iter().map(|(_, t)| wide(t)).collect();
     let buttons: Vec<TASKDIALOG_BUTTON> =
         d.buttons.iter().zip(&labels).map(|((id, _), l)| TASKDIALOG_BUTTON { id: *id, text: l.as_ptr() }).collect();
-    let data = CallbackData { shield: d.shield.unwrap_or(0) };
+    let data = CallbackData { shield: d.shield.to_vec() };
+    let command_links = d.buttons.iter().any(|(_, t)| t.contains('\n'));
     let (instance, icon) = match d.icon {
         Icon::App => (unsafe { GetModuleHandleW(null()) }, 1usize),
         Icon::Info => (0, 0xFFFD), // TD_INFORMATION_ICON
@@ -291,7 +318,7 @@ fn show(d: &Dialog) -> i32 {
         cbSize: size_of::<TASKDIALOGCONFIG>() as u32,
         hwndParent: 0,
         hInstance: instance,
-        dwFlags: 0x01 | 0x08, // hyperlinks, Esc closes
+        dwFlags: 0x01 | 0x08 | if command_links { 0x10 } else { 0 }, // hyperlinks, Esc closes, command links
         dwCommonButtons: d.common,
         pszWindowTitle: title.as_ptr(),
         pszMainIcon: icon,
@@ -356,10 +383,109 @@ fn error_dialog(instruction: &str, e: &dyn std::fmt::Display) -> i32 {
         footer: None,
         icon: Icon::Error,
         buttons: &[],
-        shield: None,
+        shield: &[],
         common: TDCBF_CLOSE_BUTTON,
     });
     1
+}
+
+// --- Asking for a port ---------------------------------------------------------------
+
+const PORT_EDIT: i32 = 1000;
+
+/// An in-memory dialog template (DLGTEMPLATE and its items), built as 16-bit words.
+struct Template(Vec<u16>);
+
+impl Template {
+    fn u32(&mut self, v: u32) {
+        self.0.extend([v as u16, (v >> 16) as u16]);
+    }
+    fn text(&mut self, s: &str) {
+        self.0.extend(s.encode_utf16().chain(Some(0)));
+    }
+    fn new(title: &str, items: u16, (cx, cy): (i16, i16)) -> Template {
+        const STYLE: u32 = 0x8000_0000 | 0x00C0_0000 | 0x0008_0000 | 0x80 | 0x40 | 0x800; // popup, caption, system menu, modal frame, font, centred
+        let mut t = Template(Vec::new());
+        t.u32(STYLE);
+        t.u32(0);
+        t.0.extend([items, 0, 0, cx as u16, cy as u16, 0, 0]); // count, x, y, cx, cy, no menu, default class
+        t.text(title);
+        t.0.push(9);
+        t.text("Segoe UI");
+        t
+    }
+    /// One control of a predefined class: 0x80 button, 0x81 edit, 0x82 static.
+    fn item(&mut self, class: u16, id: u16, style: u32, (x, y, cx, cy): (i16, i16, i16, i16), text: &str) {
+        if self.0.len() % 2 == 1 {
+            self.0.push(0); // items start on 4-byte boundaries
+        }
+        self.u32(0x5000_0000 | style); // child, visible
+        self.u32(0);
+        self.0.extend([x as u16, y as u16, cx as u16, cy as u16, id, 0xFFFF, class]);
+        self.text(text);
+        self.0.push(0); // no creation data
+    }
+    /// The words, in a buffer the template can start on a 4-byte boundary in.
+    fn aligned(&self) -> Vec<u32> {
+        let mut out = vec![0u32; self.0.len().div_ceil(2)];
+        unsafe { std::ptr::copy_nonoverlapping(self.0.as_ptr(), out.as_mut_ptr().cast::<u16>(), self.0.len()) };
+        out
+    }
+}
+
+fn port_template() -> Template {
+    const TABSTOP: u32 = 0x0001_0000;
+    let mut t = Template::new("Nightfall", 5, (210, 86));
+    t.item(0x82, 0xFFFF, 0, (8, 8, 194, 9), "New port (1024 to 65535):");
+    t.item(0x81, PORT_EDIT as u16, 0x0080_0000 | TABSTOP | 0x2000 | 0x80, (8, 20, 60, 13), ""); // border, numbers only
+    t.item(0x82, 0xFFFF, 0, (8, 40, 194, 18), "Phones and Tailscale will need the new address, which Nightfall shows next.");
+    t.item(0x80, 1, TABSTOP | 0x1, (98, 64, 50, 14), "Change"); // IDOK, default button
+    t.item(0x80, 2, TABSTOP, (152, 64, 50, 14), "Cancel");
+    t
+}
+
+unsafe extern "system" fn port_dialog_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize {
+    const WM_INITDIALOG: u32 = 0x110;
+    const WM_COMMAND: u32 = 0x111;
+    const EM_SETSEL: u32 = 0xB1;
+    const EM_LIMITTEXT: u32 = 0xC5;
+    match msg {
+        WM_INITDIALOG => {
+            set_window_icons(hwnd);
+            SetDlgItemInt(hwnd, PORT_EDIT, l as u32, 0);
+            SendDlgItemMessageW(hwnd, PORT_EDIT, EM_LIMITTEXT, 5, 0);
+            1
+        }
+        WM_COMMAND => match (w & 0xFFFF) as i32 {
+            1 => {
+                let mut ok = 0;
+                let port = GetDlgItemInt(hwnd, PORT_EDIT, &mut ok, 0);
+                if ok != 0 && (1024..=65535).contains(&port) {
+                    EndDialog(hwnd, port as isize);
+                } else {
+                    MessageBeep(0x30);
+                    SetFocus(GetDlgItem(hwnd, PORT_EDIT));
+                    SendDlgItemMessageW(hwnd, PORT_EDIT, EM_SETSEL, 0, -1);
+                }
+                1
+            }
+            2 => {
+                EndDialog(hwnd, 0);
+                1
+            }
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
+/// Ask for a port number, starting from `current`. None if cancelled.
+fn ask_port(current: u16) -> Option<u16> {
+    let template = port_template().aligned();
+    let r = unsafe {
+        DialogBoxIndirectParamW(GetModuleHandleW(null()), template.as_ptr().cast(), 0, port_dialog_proc, current as isize)
+    };
+    u16::try_from(r).ok().filter(|p| *p >= 1024)
 }
 
 // --- Where things are ----------------------------------------------------------------
@@ -410,8 +536,42 @@ fn this_exe() -> PathBuf {
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("nightfall.exe"))
 }
 
+/// Is Nightfall answering on this port (and not some other program)?
 fn is_running(port: u16) -> bool {
-    TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_millis(300)).is_ok()
+    let ask = || -> io::Result<String> {
+        let mut s = TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_millis(300))?;
+        s.set_read_timeout(Some(Duration::from_secs(1)))?;
+        s.write_all(b"GET /api/status HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")?;
+        let mut reply = String::new();
+        s.take(64 * 1024).read_to_string(&mut reply)?;
+        Ok(reply)
+    };
+    ask().is_ok_and(|r| r.starts_with("HTTP/1.1 200") && r.contains("\"dry_run\""))
+}
+
+fn wait_until_stopped(port: u16, within: Duration) -> bool {
+    let t = Instant::now();
+    while t.elapsed() < within {
+        if !is_running(port) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    false
+}
+
+fn current_user() -> String {
+    format!(
+        "{}\\{}",
+        std::env::var("USERDOMAIN").unwrap_or_default(),
+        std::env::var("USERNAME").unwrap_or_default()
+    )
+}
+
+/// The Start menu entry, for everyone on this PC.
+fn shortcut_path() -> PathBuf {
+    let data = std::env::var_os("ProgramData").map_or_else(|| PathBuf::from(r"C:\ProgramData"), PathBuf::from);
+    data.join(r"Microsoft\Windows\Start Menu\Programs\Nightfall.lnk")
 }
 
 fn wait_for_server(port: u16, within: Duration) -> bool {
@@ -539,6 +699,50 @@ fn elevated(args: &[String], here: impl FnOnce() -> i32) -> i32 {
     }
 }
 
+/// Write a .lnk file with the shell's ShellLink object (IShellLinkW, then IPersistFile::Save).
+fn create_shortcut(lnk: &Path, target: &Path, description: &str) -> io::Result<()> {
+    const CLSID_SHELL_LINK: Guid = Guid(0x0002_1401, 0, 0, [0xC0, 0, 0, 0, 0, 0, 0, 0x46]);
+    const IID_SHELL_LINK_W: Guid = Guid(0x0002_14F9, 0, 0, [0xC0, 0, 0, 0, 0, 0, 0, 0x46]);
+    const IID_PERSIST_FILE: Guid = Guid(0x0000_010B, 0, 0, [0xC0, 0, 0, 0, 0, 0, 0, 0x46]);
+    type QueryInterface = unsafe extern "system" fn(*mut c_void, *const Guid, *mut *mut c_void) -> i32;
+    type Release = unsafe extern "system" fn(*mut c_void) -> u32;
+    type SetText = unsafe extern "system" fn(*mut c_void, *const u16) -> i32;
+    type SetIcon = unsafe extern "system" fn(*mut c_void, *const u16, i32) -> i32;
+    type Save = unsafe extern "system" fn(*mut c_void, *const u16, BOOL) -> i32;
+    /// The `index`th method in a COM object's table.
+    unsafe fn method<F: Copy>(object: *mut c_void, index: usize) -> F {
+        let table = *(object as *const *const usize);
+        std::mem::transmute_copy(&*table.add(index))
+    }
+    let check = |hr: i32, what: &str| {
+        if hr < 0 {
+            Err(io::Error::other(format!("Couldn't make the Start menu shortcut ({what}: 0x{hr:08X})")))
+        } else {
+            Ok(())
+        }
+    };
+    unsafe {
+        CoInitializeEx(null(), 0x2); // apartment-threaded; already initialised is fine too
+        let mut link: *mut c_void = null_mut();
+        check(CoCreateInstance(&CLSID_SHELL_LINK, null_mut(), 0x1, &IID_SHELL_LINK_W, &mut link), "ShellLink")?;
+        let result = (|| {
+            let target_w = wide_path(target);
+            check(method::<SetText>(link, 20)(link, target_w.as_ptr()), "SetPath")?;
+            let dir = wide_path(target.parent().unwrap_or(Path::new("")));
+            check(method::<SetText>(link, 9)(link, dir.as_ptr()), "SetWorkingDirectory")?;
+            check(method::<SetText>(link, 7)(link, wide(description).as_ptr()), "SetDescription")?;
+            check(method::<SetIcon>(link, 17)(link, target_w.as_ptr(), 0), "SetIconLocation")?;
+            let mut file: *mut c_void = null_mut();
+            check(method::<QueryInterface>(link, 0)(link, &IID_PERSIST_FILE, &mut file), "IPersistFile")?;
+            let saved = check(method::<Save>(file, 6)(file, wide_path(lnk).as_ptr(), 1), "Save");
+            method::<Release>(file, 2)(file);
+            saved
+        })();
+        method::<Release>(link, 2)(link);
+        result
+    }
+}
+
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -609,7 +813,8 @@ fn install_ui(port: Option<u16>) -> i32 {
          Installing it will:\n\
          • put Nightfall in {}\n\
          • start it in the background each time you sign in\n\
-         • let devices on your home network reach it through Windows Firewall, on port {port}\n\n\
+         • let devices on your home network reach it through Windows Firewall, on port {port}\n\
+         • add it to the Start menu, where you can check on it, stop it or change the port\n\n\
          Windows will ask for permission once.",
         install_dir().display()
     );
@@ -619,25 +824,26 @@ fn install_ui(port: Option<u16>) -> i32 {
         footer: Some("You can remove it any time from Settings › Apps."),
         icon: Icon::App,
         buttons: &[(100, if before.is_some() { "Update" } else { "Install" })],
-        shield: Some(100),
+        shield: &[100],
         common: TDCBF_CANCEL_BUTTON,
     });
     if choice != 100 {
         return 0;
     }
-    let user = format!(
-        "{}\\{}",
-        std::env::var("USERDOMAIN").unwrap_or_default(),
-        std::env::var("USERNAME").unwrap_or_default()
-    );
-    let args = vec!["--do-install".to_string(), port.to_string(), user.clone()];
-    match elevated(&args, || do_install(port, &user)) {
+    match install_elevated(port) {
         0 => {}
         ERROR_CANCELLED => return 0,
         code => return code, // the elevated copy already said what went wrong
     }
-    let running = wait_for_server(port, Duration::from_secs(10));
-    status_ui_for(port, running, true)
+    wait_for_server(port, Duration::from_secs(10));
+    manage(port, true)
+}
+
+/// Install (or reinstall on another port) in an elevated copy; returns its exit code.
+fn install_elevated(port: u16) -> i32 {
+    let user = current_user();
+    let args = vec!["--do-install".to_string(), port.to_string(), user.clone()];
+    elevated(&args, || do_install(port, &user))
 }
 
 fn do_install(port: u16, user: &str) -> i32 {
@@ -658,6 +864,9 @@ fn install(port: u16, user: &str) -> io::Result<()> {
     // Stop the running copy (an older version, or the old script-based setup) so the file
     // can be replaced and the port is free.
     let _ = tool("schtasks.exe", &format!("/End /TN \"{TASK}\""));
+    for old in [before.as_ref().map(|i| i.port), Some(port)].into_iter().flatten() {
+        wait_until_stopped(old, Duration::from_secs(10)); // the port frees a moment after /End
+    }
     fs::create_dir_all(&dir)?;
     let me = this_exe();
     if !same_file(&me, &exe) {
@@ -709,49 +918,122 @@ fn install(port: u16, user: &str) -> io::Result<()> {
             ("Port", RegValue::Number(port as u32)),
         ],
     )?;
+    create_shortcut(&shortcut_path(), &exe, "Check on Nightfall, stop it or change its port")?;
 
     tool("schtasks.exe", &format!("/Run /TN \"{TASK}\"")).map(drop)
 }
 
 // --- Status --------------------------------------------------------------------------
 
-fn status_ui(i: &Installed) -> i32 {
-    status_ui_for(i.port, is_running(i.port), false)
+const OPEN: i32 = 110;
+const STOP: i32 = 111;
+const START: i32 = 112;
+const CHANGE_PORT: i32 = 113;
+const REMOVE: i32 = 114;
+
+/// The manage window: is it running, where to open it, and what you can do with it. It comes
+/// back after each action until it's closed.
+fn manage(mut port: u16, mut just_installed: bool) -> i32 {
+    loop {
+        let running = is_running(port);
+        let instruction = match (running, just_installed) {
+            (true, true) => "Nightfall is installed and running",
+            (true, false) => "Nightfall is running",
+            (false, _) => "Nightfall isn't running",
+        };
+        just_installed = false;
+        let content = if running {
+            where_to_open(port)
+        } else {
+            let logs = std::env::var("LOCALAPPDATA").map(|d| format!("{d}\\Nightfall\\logs")).unwrap_or_default();
+            format!(
+                "Your phone can't reach it until it's started again. It also starts by itself each \
+                 time you sign in; if it doesn't, the log may say why:\n{}",
+                link(&logs)
+            )
+        };
+        let port_button = format!("Change the port\nIt's {port} now");
+        let mut buttons: Vec<(i32, &str)> = Vec::new();
+        if running {
+            buttons.push((OPEN, "Open Nightfall here\nIn this PC's browser"));
+            buttons.push((STOP, "Stop Nightfall\nUntil you start it here, or sign in again"));
+        } else {
+            buttons.push((START, "Start Nightfall"));
+        }
+        buttons.push((CHANGE_PORT, &port_button));
+        buttons.push((REMOVE, "Remove Nightfall\nThe program, its sign-in task and firewall rule"));
+        let choice = show(&Dialog {
+            instruction,
+            content: &content,
+            footer: None,
+            icon: Icon::App,
+            buttons: &buttons,
+            shield: &[CHANGE_PORT, REMOVE],
+            common: TDCBF_CLOSE_BUTTON,
+        });
+        match choice {
+            OPEN => {
+                let url = wide(&format!("http://127.0.0.1:{port}"));
+                unsafe { ShellExecuteW(0, wide("open").as_ptr(), url.as_ptr(), null(), null(), 1) };
+                return 0;
+            }
+            STOP => {
+                if let Err(e) = tool("schtasks.exe", &format!("/End /TN \"{TASK}\"")) {
+                    return error_dialog("Nightfall couldn't be stopped", &e);
+                }
+                wait_until_stopped(port, Duration::from_secs(5));
+            }
+            START => {
+                if let Err(e) = tool("schtasks.exe", &format!("/Run /TN \"{TASK}\"")) {
+                    return error_dialog("Nightfall couldn't be started", &e);
+                }
+                wait_for_server(port, Duration::from_secs(10));
+            }
+            CHANGE_PORT => {
+                if let Some(new) = change_port(port) {
+                    port = new;
+                }
+            }
+            REMOVE => {
+                uninstall_ui();
+                if installed().is_none() {
+                    return 0;
+                }
+            }
+            _ => return 0,
+        }
+    }
 }
 
-fn status_ui_for(port: u16, running: bool, just_installed: bool) -> i32 {
-    let instruction = match (running, just_installed) {
-        (true, true) => "Nightfall is installed and running",
-        (true, false) => "Nightfall is running",
-        (false, _) => "Nightfall isn't running",
-    };
-    let content = if running {
-        where_to_open(port)
-    } else {
-        let logs = std::env::var("LOCALAPPDATA").map(|d| format!("{d}\\Nightfall\\logs")).unwrap_or_default();
-        format!(
-            "It starts by itself when you sign in. If it doesn't, the log may say why:\n{}",
-            link(&logs)
-        )
-    };
-    let start = [(101, "Start it")];
-    let choice = show(&Dialog {
-        instruction,
-        content: &content,
-        footer: Some("To remove Nightfall, go to Settings › Apps › Installed apps."),
-        icon: Icon::App,
-        buttons: if running { &[] } else { &start },
-        shield: None,
-        common: TDCBF_CLOSE_BUTTON,
-    });
-    if choice == 101 {
-        if let Err(e) = tool("schtasks.exe", &format!("/Run /TN \"{TASK}\"")) {
-            return error_dialog("Nightfall couldn't be started", &e);
+/// Ask for a new port and reinstall on it. Returns the new port once it's in place.
+fn change_port(current: u16) -> Option<u16> {
+    let mut suggestion = current;
+    loop {
+        let new = ask_port(suggestion)?;
+        if new == current {
+            return None;
         }
-        let running = wait_for_server(port, Duration::from_secs(10));
-        return status_ui_for(port, running, false);
+        if TcpListener::bind(("0.0.0.0", new)).is_err() {
+            show(&Dialog {
+                instruction: &format!("Port {new} is in use"),
+                content: "Another program on this PC is using it. Pick a different port.",
+                footer: None,
+                icon: Icon::Error,
+                buttons: &[],
+                shield: &[],
+                common: TDCBF_CLOSE_BUTTON,
+            });
+            suggestion = new;
+            continue;
+        }
+        return match install_elevated(new) {
+            0 => {
+                wait_for_server(new, Duration::from_secs(10));
+                Some(new)
+            }
+            _ => None,
+        };
     }
-    0
 }
 
 // --- Uninstall -----------------------------------------------------------------------
@@ -764,7 +1046,7 @@ fn uninstall_ui() -> i32 {
             footer: None,
             icon: Icon::Info,
             buttons: &[],
-            shield: None,
+            shield: &[],
             common: TDCBF_CLOSE_BUTTON,
         });
         return 0;
@@ -776,7 +1058,7 @@ fn uninstall_ui() -> i32 {
         footer: None,
         icon: Icon::App,
         buttons: &[(100, "Remove")],
-        shield: Some(100),
+        shield: &[100],
         common: TDCBF_CANCEL_BUTTON,
     });
     if choice != 100 {
@@ -793,7 +1075,7 @@ fn uninstall_ui() -> i32 {
         footer: None,
         icon: Icon::Info,
         buttons: &[],
-        shield: None,
+        shield: &[],
         common: TDCBF_CLOSE_BUTTON,
     });
     0
@@ -811,6 +1093,7 @@ fn uninstall() -> io::Result<()> {
     let _ = tool("schtasks.exe", &format!("/End /TN \"{TASK}\""));
     let _ = tool("schtasks.exe", &format!("/Delete /TN \"{TASK}\" /F"));
     let _ = tool("netsh.exe", &format!("advfirewall firewall delete rule name=\"{}\"", firewall_rule(i.port)));
+    let _ = fs::remove_file(shortcut_path());
     reg_delete(HKEY_LOCAL_MACHINE, APP_KEY);
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         let _ = fs::remove_dir_all(PathBuf::from(local).join("Nightfall"));
@@ -855,7 +1138,7 @@ pub fn main(args: &[String]) -> i32 {
         Some("--uninstall") => uninstall_ui(),
         Some("--install") => install_ui(arg(1).and_then(|p| p.parse().ok())),
         _ => match installed() {
-            Some(i) if same_file(&this_exe(), &i.exe()) || i.version == VERSION => status_ui(&i),
+            Some(i) if same_file(&this_exe(), &i.exe()) || i.version == VERSION => manage(i.port, false),
             _ => install_ui(None),
         },
     }
@@ -870,6 +1153,28 @@ mod tests {
         assert_eq!(size_of::<TASKDIALOGCONFIG>(), 160);
         assert_eq!(size_of::<TASKDIALOG_BUTTON>(), 12);
         assert_eq!(size_of::<SHELLEXECUTEINFOW>(), 112);
+        assert_eq!(size_of::<Guid>(), 16);
+    }
+
+    #[test]
+    fn port_dialog_template_is_laid_out_for_windows() {
+        let t = port_template();
+        assert_eq!(t.0[4], 5, "item count");
+        // Every item starts on a 4-byte boundary: find each child style (0x5000_0000's high word).
+        let starts: Vec<usize> = (0..t.0.len() - 1).filter(|&i| t.0[i + 1] & 0xF000 == 0x5000 && t.0[i + 1] >> 12 == 5).collect();
+        assert_eq!(starts.len(), 5);
+        assert!(starts.iter().all(|i| i % 2 == 0));
+        assert_eq!(t.aligned().len() * 2, t.0.len().div_ceil(2) * 2);
+    }
+
+    /// Writes a Start menu style shortcut to the temp folder and checks it's a .lnk file.
+    #[test]
+    fn shortcut_is_written() {
+        let lnk = std::env::temp_dir().join("nightfall-test.lnk");
+        create_shortcut(&lnk, &this_exe(), "test").unwrap();
+        let bytes = fs::read(&lnk).unwrap();
+        let _ = fs::remove_file(&lnk);
+        assert_eq!(&bytes[..4], &[0x4C, 0, 0, 0], "ShellLink header");
     }
 
     #[test]
@@ -915,6 +1220,20 @@ mod tests {
         for want in ["--serve --port 39999", "InteractiveToken", "PT0S", "<Count>10</Count>", "IgnoreNew"] {
             assert!(shown.contains(want), "{want} missing from\n{shown}");
         }
+    }
+
+    /// Shows the manage window for the installed port, to look at. `cargo test -- --ignored manage_window`
+    #[test]
+    #[ignore]
+    fn manage_window() {
+        manage(installed().map_or(DEFAULT_PORT, |i| i.port), false);
+    }
+
+    /// Shows the port window, to look at. `cargo test -- --ignored port_window`
+    #[test]
+    #[ignore]
+    fn port_window() {
+        ask_port(DEFAULT_PORT);
     }
 
     #[test]

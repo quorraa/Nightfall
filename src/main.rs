@@ -76,11 +76,22 @@ fn main() {
     };
     let config = CONFIG.get_or_init(|| config);
 
-    let listener = match win::bind_dual_stack(port) {
-        Ok(l) => l,
-        Err(e) => {
-            error!("port {port} is busy ({e}); is Nightfall already running?");
-            std::process::exit(1);
+    // A copy that was just stopped (an update, a port change) can hold the port for a moment,
+    // so wait a minute for it before giving up.
+    let started = std::time::Instant::now();
+    let listener = loop {
+        match win::bind_dual_stack(port) {
+            Ok(l) => break l,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && started.elapsed().as_secs() < 60 => {
+                if started.elapsed().as_millis() < 1000 {
+                    warning!("port {port} is busy; waiting for it to be free");
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            Err(e) => {
+                error!("port {port} is busy ({e}); is Nightfall already running?");
+                std::process::exit(1);
+            }
         }
     };
     info!(

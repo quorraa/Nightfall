@@ -174,8 +174,19 @@ pub fn last_input_tick() -> u32 {
     info.dwTime
 }
 
+/// Where to send SC_MONITORPOWER: our own hidden window, whose default handling asks Windows
+/// once. Broadcasting it to every window (the usual recipe) also works, but each window acts
+/// on its copy whenever it gets round to it, so a busy or throttled one can turn the screens
+/// off again seconds (or longer) after someone has woken them.
+fn power_target() -> HWND {
+    match WATCHER_HWND.load(Ordering::SeqCst) {
+        0 => HWND_BROADCAST, // the watcher isn't up (yet): better late copies than nothing
+        hwnd => hwnd,
+    }
+}
+
 pub fn post_monitors_off() -> io::Result<()> {
-    if unsafe { PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, MONITOR_OFF) } == 0 {
+    if unsafe { PostMessageW(power_target(), WM_SYSCOMMAND, SC_MONITORPOWER, MONITOR_OFF) } == 0 {
         return Err(last_error("PostMessageW(SC_MONITORPOWER)"));
     }
     Ok(())
@@ -201,7 +212,7 @@ pub fn monitors_on() {
     // SC_MONITORPOWER -1 alone is unreliable on modern drivers; a 1px nudge and back
     // counts as real input and wakes every display.
     unsafe {
-        PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, MONITOR_ON);
+        PostMessageW(power_target(), WM_SYSCOMMAND, SC_MONITORPOWER, MONITOR_ON);
         SetThreadExecutionState(ES_DISPLAY_REQUIRED);
     }
     send_mouse_moves(&[1, -1]);

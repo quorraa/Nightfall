@@ -40,10 +40,12 @@ Nightfall:
 - copies itself to `C:\Program Files\Nightfall`,
 - adds a sign-in task that starts it with no window and restarts it if it stops,
 - opens port 39847 in Windows Firewall for your home network only,
-- adds itself to **Settings › Apps**, which is where you remove it.
+- adds **Nightfall** to the Start menu and to **Settings › Apps**.
 
-Opening `nightfall.exe` again shows whether it's running and its addresses. Opening a newer
-version offers to update. To install on another port: `.\nightfall.exe --install 40000`.
+Nightfall in the Start menu shows whether it's running and the addresses to open on your phone,
+and lets you open it in this PC's browser, stop or start it, change the port, or remove it.
+Opening a newer `nightfall.exe` offers to update. To install on another port from a terminal:
+`.\nightfall.exe --install 40000`.
 
 To try it without touching the screens, run a test copy on port 39848 next to the real one:
 `.\nightfall.exe --port 39848 --dry-run`

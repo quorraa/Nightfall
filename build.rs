@@ -200,7 +200,8 @@ fn windows_resources(manifest_dir: &Path, out_dir: &Path) {
 
     let path = out_dir.join("nightfall.res");
     fs::write(&path, res).unwrap();
-    println!("cargo:rustc-link-arg-bins={}", path.display());
+    // Every target, so the test build's dialogs look like the real ones too.
+    println!("cargo:rustc-link-arg={}", path.display());
 }
 
 fn main() {
