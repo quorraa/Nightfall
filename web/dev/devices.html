@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Nightfall: device check</title>
+  <style>
+    body { font: 14px/1.45 system-ui, sans-serif; background: #0b0c18; color: #dfe4ff; margin: 24px; }
+    table { border-collapse: collapse; }
+    td, th { padding: 4px 12px 4px 0; vertical-align: top; text-align: left; }
+    .ok { color: #a6e3c8; } .bad { color: #ffbf78; }
+    iframe { position: fixed; left: 0; top: 0; border: 0; visibility: hidden; }
+  </style>
+</head>
+<body>
+  <h1>Device check</h1>
+  <p>Loads the page at each size below with worst-case text and the device’s safe areas, in all three
+    modes, and lists anything off screen, clipped, overlapping, too small to tap, or hiding the cabin.</p>
+  <p id="sum">Running…</p>
+  <table><thead><tr><th>Device</th><th>Size</th><th>Layout</th><th>Cabin</th><th>Result</th></tr></thead><tbody id="rows"></tbody></table>
+  <iframe id="f"></iframe>
+  <script type="module">
+    import { audit } from './devices.js';
+    const rows = document.getElementById('rows');
+    const results = await audit(document.getElementById('f'), undefined, (r) => {
+      const tr = rows.insertRow();
+      for (const v of [r.name, r.size, r.layout || (r.webgl ? '' : 'no WebGL'), r.cabin]) tr.insertCell().textContent = v;
+      const c = tr.insertCell();
+      c.className = r.issues.length ? 'bad' : 'ok';
+      c.innerHTML = r.issues.length ? r.issues.map((s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')).join('<br>') : 'ok';
+    });
+    const bad = results.filter((r) => r.issues.length).length;
+    document.getElementById('sum').textContent = `${results.length} sizes, ${bad} with problems.`;
+    window.auditResults = results;
+  </script>
+</body>
+</html>

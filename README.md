@@ -4,6 +4,22 @@ Turn this PC's monitors off from your phone. It sends the same signal Windows se
 "Turn off the display after N minutes" runs out (`SC_MONITORPOWER`), so the displays sleep but
 stay connected, and wake on any mouse or keyboard input.
 
+<p align="center">
+  <img src="docs/media/portrait.gif" alt="On a phone: the lake at night, the slider is dragged across, the cabin lamp goes out and the stars come out" width="300">
+  &nbsp;
+  <img src="docs/media/landscape.gif" alt="The same lights-out sequence with the phone on its side" width="520">
+</p>
+
+<p align="center">
+  <img src="docs/media/portrait-idle.jpg" alt="Phone, before lights out: clock, time choices and the slide-to-turn-off control over the lake" width="200">
+  <img src="docs/media/portrait-night.jpg" alt="Phone, after lights out: Goodnight, the cabin dark, the Milky Way bright" width="200">
+  <img src="docs/media/desktop-idle.jpg" alt="In a desktop browser, before lights out" width="380">
+</p>
+<p align="center">
+  <img src="docs/media/landscape-night.jpg" alt="Phone on its side, after lights out" width="400">
+  <img src="docs/media/desktop-night.jpg" alt="In a desktop browser, after lights out" width="380">
+</p>
+
 Requirements: Windows 10 or 11 and Python 3.9 or newer, with `pythonw.exe` on your PATH. No packages
 to install. `install.ps1` prints both addresses below when it finishes.
 
@@ -63,7 +79,20 @@ three.js r185 (vendored in `web/vendor`), WebGL2, every shader hand-written.
   mapping, vignette, dither.
 
 Debug URL options: `?seed=N`, `?freeze=SECONDS`, `?night=1`, `?q=low`, `?msaa=0`, `?fps`,
-`?debug=nopost|bloom|refl|water|forest`.
+`?debug=nopost|bloom|refl|water|forest`, `?capture`.
+
+### Devices
+
+The layout is checked on 47 screen sizes, from a 280 px folding-phone cover screen through every
+current iPhone, Pixel and Galaxy size, foldables and iPads in both orientations, to laptops,
+1080p, 1440p, ultrawide and 4K monitors. With a test server running, open
+`http://127.0.0.1:39848/dev/devices.html`. It loads the page at each size with the longest text it
+can show (a long PC name, an error message) and that device's notch and home-bar insets, in all
+three modes, and lists anything off screen, clipped, overlapping, under the notch, too small to
+tap, or hiding the cabin.
+
+`tools/capture.py` records the GIFs and pictures above with headless Chromium (see the top of
+the file).
 
 ## License
 

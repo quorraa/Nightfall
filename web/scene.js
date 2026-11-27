@@ -13,6 +13,7 @@ import { createPost } from './gl/post.js';
 //
 // API (used by app.js): setGround(frac), setLamp(v), setNight(bool), setParallax(x, y).
 // Debug: ?debug=nopost|refl|bloom|water|forest  ?seed=N  ?freeze=T  ?night=1  ?q=low  ?fps
+//        ?capture (no loop; call nightfall.step(dt) per frame, for recording)
 // ---------------------------------------------------------------------------------------------
 
 const clamp = THREE.MathUtils.clamp;
@@ -59,7 +60,7 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
   let groundFrac = 0.7, cssW = 1, cssH = 1, yawBase = 0, pitchBase = 0, layout = 'portrait';
   function frame() {
     const aspect = cssW / cssH;
-    layout = aspect < 1 ? 'portrait' : cssH <= 520 ? 'phone-landscape' : 'desktop';
+    layout = aspect < 1 ? 'portrait' : cssH <= 520 && aspect >= 1.5 ? 'phone-landscape' : 'desktop';
     const vfov = clamp(2 * Math.atan(Math.tan(deg(37)) / aspect), deg(40), deg(62));
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
     camera.fov = THREE.MathUtils.radToDeg(vfov);
@@ -74,7 +75,10 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
   }
 
   // ---------- Resolution ----------
-  let budget = low ? 0.7e6 : 1.3e6, dpr = 1, bufW = 1, bufH = 1;
+  // Pixels per frame. A mouse means a desktop GPU, which can afford more on big monitors; the
+  // adaptive step below lowers it again if frames get slow.
+  const desktop = matchMedia('(pointer: fine)').matches && !matchMedia('(pointer: coarse)').matches;
+  let budget = low ? 0.7e6 : desktop ? 2.4e6 : 1.3e6, dpr = 1, bufW = 1, bufH = 1;
   function resize() {
     cssW = Math.max(1, canvas.clientWidth);
     cssH = Math.max(1, canvas.clientHeight);
@@ -221,7 +225,16 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
   choreograph(clock, 0);
   draw();
 
-  function start() { if (!raf) { last = performance.now(); lastDraw = 0; raf = requestAnimationFrame(tick); } }
+  // ?capture: no animation loop; a recorder calls nightfall.step(dt) once per frame it saves.
+  const manual = q.has('capture');
+  function step(dt) {
+    clock += dt;
+    choreograph(clock, dt);
+    draw();
+    canvas.style.transition = 'none';
+    canvas.style.opacity = '1';
+  }
+  function start() { if (!raf && !manual) { last = performance.now(); lastDraw = 0; raf = requestAnimationFrame(tick); } }
   function stop() { cancelAnimationFrame(raf); raf = 0; }
   document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
   canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); stop(); });
@@ -239,6 +252,7 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
     },
     setParallax(x, y) { st.parTarget.set(clamp(x, -1, 1), clamp(y, -1, 1)); },
   };
-  window.nightfall = { stats, renderer, scene, camera, shared, sky, land, water, post, state: st, ...api };
+  const view = () => ({ yaw: yawBase, pitch: pitchBase, layout, groundFrac });
+  window.nightfall = { stats, renderer, scene, camera, shared, sky, land, water, post, state: st, view, step, ...api };
   return api;
 }

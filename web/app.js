@@ -4,16 +4,19 @@ const $ = (s) => document.querySelector(s);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // ---------- Home-screen app height ----------
-// iOS standalone web apps can report a layout viewport shorter than the screen, which leaves
-// a strip at the bottom. Size the page to the full screen there (screen.* never swaps on
-// rotation, so landscape height is screen.width).
-const standaloneMq = matchMedia('(display-mode: standalone)');
+// iOS home-screen apps can report a layout viewport a strip shorter than the screen, which
+// leaves a gap at the bottom. Size the page to the full screen there (screen.* never swaps on
+// rotation, so landscape height is screen.width). Only iOS (navigator.standalone), and only
+// when the gap is a strip: Android counts its own bars in screen.height, and an iPad window
+// in Split View or Stage Manager is meant to be shorter than the screen.
 function syncAppHeight() {
   const root = document.documentElement;
-  if (!(navigator.standalone || standaloneMq.matches)) return root.style.removeProperty('--app-h');
+  if (!navigator.standalone) return root.style.removeProperty('--app-h');
   const portrait = matchMedia('(orientation: portrait)').matches;
-  const h = Math.max(window.innerHeight, portrait ? screen.height : screen.width);
-  root.style.setProperty('--app-h', `${h}px`);
+  const full = portrait ? screen.height : screen.width;
+  const gap = full - window.innerHeight;
+  if (gap <= 0 || gap > 140) return root.style.removeProperty('--app-h');
+  root.style.setProperty('--app-h', `${full}px`);
 }
 syncAppHeight();
 for (const ev of ['resize', 'orientationchange', 'pageshow']) window.addEventListener(ev, syncAppHeight);
@@ -66,7 +69,7 @@ setInterval(renderClock, 1000);
 
 // ---------- Layout hook: the hills sit just above the controls ----------
 // (A phone on its side puts the controls in a side column, so the land stays low.)
-const phoneLandscape = matchMedia('(orientation: landscape) and (max-height: 520px)');
+const phoneLandscape = matchMedia('(orientation: landscape) and (max-height: 520px) and (min-aspect-ratio: 3/2)');
 function syncGround() {
   if (phoneLandscape.matches) return sceneDo((s) => s.setGround(0.8));
   const top = ui.panel.getBoundingClientRect().top;

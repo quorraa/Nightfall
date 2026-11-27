@@ -109,7 +109,7 @@ svg { display: block; }
 /* Hero: a bedside clock */
 .hero {
   position: absolute;
-  top: calc(var(--safe-t) + 11vh);
+  top: calc(var(--safe-t) + max(11vh, 64px));
   left: calc(var(--safe-l) + 24px);
   right: 40%;
   pointer-events: none;
@@ -117,7 +117,7 @@ svg { display: block; }
 }
 .clock {
   font-family: var(--serif);
-  font-size: clamp(64px, 21vw, 120px);
+  font-size: clamp(56px, min(21vw, 18vh), 120px);
   line-height: 0.95;
   font-weight: 400;
   letter-spacing: -0.02em;
@@ -173,12 +173,17 @@ body[data-mode="night"] .view-night { transition-delay: 2.2s; transition-duratio
   justify-content: space-between;
   gap: 4px;
   margin-bottom: 16px;
+  container-type: inline-size;
 }
 .when button {
   flex: 1;
-  padding: 10px 0;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0;
   border-radius: 999px;
+  white-space: nowrap;
   font-size: 15px;
+  font-size: clamp(12px, 5.4cqi, 15px); /* shrinks only on the narrowest screens */
   color: var(--muted);
   transition: color 0.3s, background 0.3s;
 }
@@ -303,7 +308,7 @@ body[data-mode="night"] .view-night { transition-delay: 2.2s; transition-duratio
 }
 .sub { margin: 8px 0 26px; font-size: 15px; color: var(--muted); }
 body[data-mode="night"] .btn.ghost { color: var(--muted); }
-body[data-mode="night"] .hero { opacity: 0.16; transform: translateY(-6px); }
+body[data-mode="night"] .hero { opacity: 0.16; }
 body[data-mode="night"] .top { opacity: 0.4; }
 
 @media (orientation: landscape) and (min-width: 700px) {
@@ -311,8 +316,9 @@ body[data-mode="night"] .top { opacity: 0.4; }
   .clock { font-size: clamp(80px, 11vw, 150px); }
 }
 
-/* Phone on its side: bedside clock on the left, controls in a column on the right */
-@media (orientation: landscape) and (max-height: 520px) {
+/* Phone on its side: bedside clock on the left, controls in a column on the right.
+   (Keep this query in sync with app.js and the 'phone-landscape' layout in scene.js.) */
+@media (orientation: landscape) and (max-height: 520px) and (min-aspect-ratio: 3/2) {
   .veil {
     inset: 0 0 0 auto;
     width: 60%;
@@ -320,7 +326,7 @@ body[data-mode="night"] .top { opacity: 0.4; }
     background: linear-gradient(to left, rgba(3, 4, 12, 0.5), rgba(3, 4, 12, 0));
   }
   .hero {
-    top: calc(var(--safe-t) + 17vh);
+    top: calc(var(--safe-t) + max(17vh, 58px));
     left: calc(var(--safe-l) + 24px);
     right: auto;
     width: 44vw;
