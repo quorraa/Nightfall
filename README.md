@@ -64,3 +64,7 @@ three.js r185 (vendored in `web/vendor`), WebGL2, every shader hand-written.
 
 Debug URL options: `?seed=N`, `?freeze=SECONDS`, `?night=1`, `?q=low`, `?msaa=0`, `?fps`,
 `?debug=nopost|bloom|refl|water|forest`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). `web/vendor/` is three.js, © 2010-2026 Three.js Authors, also MIT.
