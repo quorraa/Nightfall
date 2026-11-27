@@ -50,6 +50,7 @@ button {
 button:focus-visible { outline: 2px solid var(--pearl); outline-offset: 3px; }
 
 svg { display: block; }
+[hidden] { display: none !important; }
 
 #sky {
   position: absolute;
@@ -265,15 +266,77 @@ body[data-mode="night"] .view-night { transition-delay: 2.2s; transition-duratio
   transition: color 0.3s;
 }
 .text-btn:active { color: var(--pearl); }
-.text-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.text-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.text-btn { min-height: 44px; }
+
+/* Status line: floats just above the time choices so it never moves the layout */
+.view-idle { position: relative; }
 .message {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: calc(100% + 6px);
   font-size: 13px;
   line-height: 1.35;
   color: var(--muted);
-  text-align: right;
-  transition: opacity 0.5s;
+  text-align: center;
+  text-shadow: 0 1px 8px rgba(3, 4, 12, 0.9);
+  pointer-events: none;
 }
+.message:empty { display: none; }
 .message[data-tone="error"] { color: var(--lamp); }
+
+/* Scene sheet: takes the panel's place while it's open */
+body[data-sheet="scenes"] .view {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(14px);
+  transition: opacity 0.5s var(--ease), transform 0.5s var(--ease), visibility 0s linear 0.5s;
+}
+body[data-sheet="scenes"] .view.view-scenes {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 0.6s var(--ease) 0.1s, transform 0.6s var(--ease) 0.1s, visibility 0s;
+}
+.sheet-title {
+  font-family: var(--serif);
+  font-size: 24px;
+  color: var(--pearl);
+  margin-bottom: 10px;
+}
+.scene-list {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.scene-list button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 12px;
+  min-height: 56px;
+  padding: 9px 18px;
+  border-radius: 18px;
+  text-align: left;
+  background: rgba(10, 12, 32, 0.45);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.scene-list button[aria-checked="true"] {
+  background: var(--wash);
+  box-shadow: inset 0 0 0 1px rgba(236, 230, 212, 0.45);
+}
+.scene-list .name { font-size: 16px; color: var(--pearl); }
+.scene-list .desc { grid-column: 1; font-size: 13px; color: var(--muted); }
+.scene-list .tick {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  width: 20px; height: 20px;
+  fill: none; stroke: var(--pearl); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.scene-list button[aria-checked="true"] .tick { opacity: 1; }
 
 /* Pending */
 .pending-label { font-size: 15px; color: var(--muted); }
@@ -310,6 +373,11 @@ body[data-mode="night"] .view-night { transition-delay: 2.2s; transition-duratio
 body[data-mode="night"] .btn.ghost { color: var(--muted); }
 body[data-mode="night"] .hero { opacity: 0.16; }
 body[data-mode="night"] .top { opacity: 0.4; }
+
+/* Very short windows that aren't a phone on its side: the clock is enough */
+@media (max-height: 460px) and (max-aspect-ratio: 3/2) {
+  .line { display: none; }
+}
 
 @media (orientation: landscape) and (min-width: 700px) {
   .hero { top: calc(var(--safe-t) + 14vh); left: calc(var(--safe-l) + 6vw); }
@@ -348,6 +416,10 @@ body[data-mode="night"] .top { opacity: 0.4; }
   .countdown { font-size: 60px; margin-bottom: 16px; }
   .goodnight { font-size: 40px; }
   .sub { margin-bottom: 18px; }
+  .sheet-title { font-size: 20px; margin-bottom: 6px; }
+  .scene-list { gap: 4px; margin-bottom: 8px; }
+  .scene-list button { min-height: 44px; padding: 5px 14px; }
+  .scene-list .desc { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

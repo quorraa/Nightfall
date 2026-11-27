@@ -1,25 +1,26 @@
 import * as THREE from './vendor/three.module.min.js';
 import { seeded, smooth } from './gl/common.js';
-import { CAM, CABIN, createShared, deg } from './gl/world.js';
+import { createShared, deg } from './gl/world.js';
 import { createSky } from './gl/sky.js';
-import { createLand } from './gl/land.js';
-import { createWater } from './gl/water.js';
 import { createPost } from './gl/post.js';
+import { sceneById } from './scenes/index.js';
 
 // ---------------------------------------------------------------------------------------------
-// Nightfall scene: a lake at night seen from the near bank. A log cabin across the water holds
-// the lamp that stands for the PC's monitors; when they go dark the lamp goes out, the eyes
-// adapt, more stars and the Milky Way come through, the lake stills and an aurora rises.
+// Nightfall's renderer. The sky (stars, Milky Way, moon, aurora, shooting stars) and the post
+// pass are shared; the world under them is a scene module from scenes/ (the lake, the coast...).
+// Every scene has one lamp that stands for the PC's monitors; when they go dark the lamp goes
+// out, the eyes adapt, more stars and the Milky Way come through and the scene calms.
 //
-// API (used by app.js): setGround(frac), setLamp(v), setNight(bool), setParallax(x, y).
+// API (used by app.js): setGround(frac), setLamp(v), setNight(bool), setParallax(x, y),
+// setScene(id) -> Promise.
 // Debug: ?debug=nopost|refl|bloom|water|forest  ?seed=N  ?freeze=T  ?night=1  ?q=low  ?fps
-//        ?capture (no loop; call nightfall.step(dt) per frame, for recording)
+//        ?scene=ID  ?capture (no loop; call nightfall.step(dt) per frame, for recording)
 // ---------------------------------------------------------------------------------------------
 
 const clamp = THREE.MathUtils.clamp;
 const SIDEREAL = (Math.PI * 2) / 86164;
 
-export function createScene(canvas, { reducedMotion = false } = {}) {
+export async function createScene(canvas, { reducedMotion = false, sceneId } = {}) {
   const q = new URLSearchParams(location.search);
   const seed = (+q.get('seed') || 7) >>> 0;
   const debug = q.get('debug') || '';
@@ -43,20 +44,57 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 3200);
   camera.rotation.order = 'YXZ';
-  camera.position.set(CAM.x, CAM.y, CAM.z);
 
   const t0 = performance.now();
   const sky = createSky(shared, rnd, { starCount: low ? 11000 : 22000 });
-  const land = createLand(shared, { seed, debug: { forest: debug === 'forest' } });
   const post = createPost(renderer, { msaa });
-  const water = createWater(shared, post.reflRT.texture, { seed, fireflies: low ? 40 : 70, reducedMotion });
-  if (debug === 'water') water.uniforms.uDebug.value = 1;
-  scene.add(sky.group, land.group, water.group);
+  scene.add(sky.group);
   sky.bake(renderer);
-  const buildMs = Math.round(performance.now() - t0);
+
+  // ---------- World (a scene module) ----------
+  // Each build starts from the default shared values, so one scene's mood never leaks into
+  // the next.
+  const defaults = createShared();
+  function resetShared() {
+    for (const [k, u] of Object.entries(defaults)) {
+      const v = u.value;
+      if (v && typeof v.copy === 'function') shared[k].value.copy(v);
+      else shared[k].value = v;
+    }
+  }
+  function disposeTree(root) {
+    root.traverse((o) => {
+      o.geometry?.dispose();
+      for (const m of [].concat(o.material || [])) {
+        for (const u of Object.values(m.uniforms || {})) if (u.value?.isTexture && u.value !== post.reflRT.texture) u.value.dispose();
+        m.dispose();
+      }
+    });
+  }
+  let world = null, worldId = '', focusAz = 0;
+  async function loadWorld(id) {
+    const def = sceneById(id);
+    const mod = await def.load();
+    resetShared();
+    // Build before taking the old world down, so a scene that fails leaves the old one in place.
+    const w = mod.build({ shared, renderer, reflTexture: post.reflRT.texture, seed, rnd: seeded(seed * 13 + 5), low, debug, reducedMotion });
+    if (world) {
+      scene.remove(world.group);
+      world.dispose?.();
+      disposeTree(world.group);
+    }
+    scene.add(w.group);
+    camera.position.set(w.cam.x, w.cam.y, w.cam.z);
+    focusAz = Math.atan2(w.focus.x - w.cam.x, -(w.focus.z - w.cam.z));
+    world = w;
+    worldId = def.id;
+    stats.scene = def.id;
+    Object.assign(stats, w.stats || {});
+    frame();
+    renderer.compile(scene, camera);
+  }
 
   // ---------- Framing ----------
-  const cabinAz = Math.atan2(CABIN.x - CAM.x, -(CABIN.z - CAM.z));
   let groundFrac = 0.7, cssW = 1, cssH = 1, yawBase = 0, pitchBase = 0, layout = 'portrait';
   function frame() {
     const aspect = cssW / cssH;
@@ -69,9 +107,9 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
     const hTop = groundFrac - 0.16;
     pitchBase = Math.atan((2 * hTop - 1) * Math.tan(vfov / 2));
     const tx = layout === 'portrait' ? 0.6 : layout === 'phone-landscape' ? 0.27 : 0.56;
-    yawBase = cabinAz - Math.atan((2 * tx - 1) * Math.tan(hfov / 2));
+    yawBase = focusAz - Math.atan((2 * tx - 1) * Math.tan(hfov / 2));
     shared.uYaw.value = yawBase;
-    water.setDistort(vfov, aspect);
+    world?.setView?.(vfov, aspect);
   }
 
   // ---------- Resolution ----------
@@ -109,7 +147,7 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
     st.lamp = approach(st.lamp, st.lampTarget, st.lampTarget < st.lamp ? 2.2 : 4, dt);
     if (st.night) st.nightT += dt;
     st.adapt = approach(st.adapt, st.night ? 1 : 0, st.night ? 0.1 : 1, dt);
-    const auroraOn = st.night && st.nightT > 12 && !reducedMotion;
+    const auroraOn = st.night && st.nightT > 12 && !reducedMotion && world.aurora;
     st.aurora = approach(st.aurora, auroraOn ? 0.5 : 0, auroraOn ? 0.075 : 0.6, dt);
     st.fire = approach(st.fire, st.night ? 0.25 : 1, 0.2, dt);
     st.tilt = approach(st.tilt, st.night ? 1 : 0, 0.3, dt);
@@ -123,8 +161,6 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
     shared.uAurora.value = st.aurora;
     shared.uTime.value = t;
     shared.uMistDrift.value.set(t * 0.004, t * 0.0015);
-    water.flyUniforms.uFire.value = st.fire;
-    land.setSmoke(0.4 + 0.6 * smooth(0, 0.6, st.lamp));
     post.uniforms.uExposure.value = 1.25 * (1 + 0.3 * st.adapt);
     sky.uniforms.uMilkyGain.value = 1 + 0.35 * st.adapt;
 
@@ -148,23 +184,24 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
     camera.rotation.x = pitchBase + deg(4) * smooth(0, 1, st.tilt) + st.par.y * 0.03 + drift * 0.003 * Math.sin(t * 0.037 + 1);
     camera.updateMatrixWorld();
     sky.update(dt, camera.position);
-    water.update(t, dt, st.night ? 0.55 : 1);
+    world.update(t, dt, st);
   }
 
   // ---------- Render ----------
-  const farTier = land.farTier;
   const mode = debug === 'nopost' ? 1 : debug === 'bloom' ? 2 : 0;
   function draw() {
-    // Reflection: the same camera, the world mirrored in y = 0, at half resolution.
-    shared.uMirror.value = -1;
-    shared.uPx.value = dpr * 0.5;
-    water.water.visible = false;
-    for (const m of farTier) m.visible = false;
-    renderer.setRenderTarget(post.reflRT);
-    renderer.clear();
-    renderer.render(scene, camera);
-    water.water.visible = true;
-    for (const m of farTier) m.visible = true;
+    // Reflection: the same camera, the world mirrored in y = 0, at half resolution (only for
+    // scenes with water).
+    if (world.reflection) {
+      const hide = world.reflection.hide || [];
+      shared.uMirror.value = -1;
+      shared.uPx.value = dpr * 0.5;
+      for (const m of hide) m.visible = false;
+      renderer.setRenderTarget(post.reflRT);
+      renderer.clear();
+      renderer.render(scene, camera);
+      for (const m of hide) m.visible = true;
+    }
 
     shared.uMirror.value = 1;
     shared.uPx.value = dpr;
@@ -178,9 +215,16 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
 
   // ---------- Loop ----------
   const stats = {
-    build: buildMs, ...land.stats, float: post.info.float, msaa,
+    build: 0, float: post.info.float, msaa, scene: '',
     fps: 0, ms: 0, dpr: 0, w: 0, h: 0, layout: '', downgrades: 0,
   };
+  try {
+    await loadWorld(sceneId || q.get('scene'));
+  } catch (err) {
+    console.error('scene failed to load; showing the lake', err);
+    await loadWorld('lake');
+  }
+  stats.build = Math.round(performance.now() - t0);
   let raf = 0, last = performance.now(), lastDraw = 0, clock = freezeAt ?? 0, ema = 16.7, slow = 0, frames = 0, fpsT = last;
   let revealed = false;
   canvas.style.opacity = '0';
@@ -216,7 +260,7 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
     if (now - fpsT > 1000) {
       Object.assign(stats, { fps: Math.round((frames * 1000) / (now - fpsT)), ms: +ema.toFixed(1), dpr: +dpr.toFixed(2), w: bufW, h: bufH, layout });
       frames = 0; fpsT = now;
-      if (fpsBox) fpsBox.textContent = `${stats.fps} fps  ${stats.ms} ms\n${bufW}x${bufH} @${stats.dpr}\ntrees ${stats.trees.join('/')}`;
+      if (fpsBox) fpsBox.textContent = `${stats.fps} fps  ${stats.ms} ms\n${bufW}x${bufH} @${stats.dpr}\n${stats.scene}`;
     }
   }
 
@@ -251,8 +295,38 @@ export function createScene(canvas, { reducedMotion = false } = {}) {
       st.cued = false;
     },
     setParallax(x, y) { st.parTarget.set(clamp(x, -1, 1), clamp(y, -1, 1)); },
+    // Fade to black, swap the world, fade back in. Calls made while a swap runs queue up; only
+    // the last one wins.
+    setScene(id) {
+      wanted = sceneById(id).id;
+      swapping ??= (async () => {
+        while (wanted !== worldId) {
+          const next = wanted;
+          canvas.style.transition = 'opacity 0.45s ease';
+          canvas.style.opacity = '0';
+          if (!manual) await new Promise((r) => setTimeout(r, 470));
+          const t = performance.now();
+          const prev = worldId;
+          try {
+            await loadWorld(next);
+          } catch (err) {
+            console.error(`scene "${next}" failed to load`, err);
+            wanted = prev;
+            if (worldId === prev) await loadWorld(prev); // its shared values were reset; rebuild it
+          }
+          stats.build = Math.round(performance.now() - t);
+          choreograph(clock, 0);
+          draw();
+          canvas.style.transition = manual ? 'none' : 'opacity 0.9s ease';
+          canvas.style.opacity = '1';
+        }
+        swapping = null;
+      })();
+      return swapping;
+    },
   };
+  let wanted = worldId, swapping = null;
   const view = () => ({ yaw: yawBase, pitch: pitchBase, layout, groundFrac });
-  window.nightfall = { stats, renderer, scene, camera, shared, sky, land, water, post, state: st, view, step, ...api };
+  window.nightfall = { stats, renderer, scene, camera, shared, sky, post, state: st, view, step, get world() { return world; }, ...api };
   return api;
 }

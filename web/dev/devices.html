@@ -21,13 +21,15 @@
   <script type="module">
     import { audit } from './devices.js';
     const rows = document.getElementById('rows');
+    const sceneParam = new URLSearchParams(location.search).get('scene') || 'lake';
+    document.querySelector('h1').textContent += ` (scene: ${sceneParam})`;
     const results = await audit(document.getElementById('f'), undefined, (r) => {
       const tr = rows.insertRow();
       for (const v of [r.name, r.size, r.layout || (r.webgl ? '' : 'no WebGL'), r.cabin]) tr.insertCell().textContent = v;
       const c = tr.insertCell();
       c.className = r.issues.length ? 'bad' : 'ok';
       c.innerHTML = r.issues.length ? r.issues.map((s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')).join('<br>') : 'ok';
-    });
+    }, sceneParam);
     const bad = results.filter((r) => r.issues.length).length;
     document.getElementById('sum').textContent = `${results.length} sizes, ${bad} with problems.`;
     window.auditResults = results;

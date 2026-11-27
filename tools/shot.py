@@ -41,7 +41,8 @@ def main():
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(f"{a.base}/?{q}")
             try:
-                page.wait_for_function("window.nightfall && window.nightfall.step", timeout=20000)
+                # (a function-valued expression would be called by Playwright, so test for it)
+                page.wait_for_function("typeof window.nightfall?.step === 'function'", timeout=20000)
             except Exception:
                 print(size, "page did not start:", errors)
                 ctx.close()

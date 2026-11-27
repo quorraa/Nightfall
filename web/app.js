@@ -1,4 +1,5 @@
 import { createScene } from './scene.js';
+import { SCENES, sceneById } from './scenes/index.js';
 
 const $ = (s) => document.querySelector(s);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -23,9 +24,14 @@ for (const ev of ['resize', 'orientationchange', 'pageshow']) window.addEventLis
 window.visualViewport?.addEventListener('resize', syncAppHeight);
 requestAnimationFrame(() => requestAnimationFrame(syncAppHeight));
 
+// The scene you picked last time on this device (?scene= overrides it).
+const SCENE_KEY = 'nightfall.scene';
+const savedScene = () => { try { return localStorage.getItem(SCENE_KEY); } catch { return null; } };
+let sceneId = sceneById(new URLSearchParams(location.search).get('scene') || savedScene()).id;
+
 let scene = null;
 try {
-  scene = createScene($('#sky'), { reducedMotion });
+  scene = await createScene($('#sky'), { reducedMotion, sceneId });
 } catch (err) {
   console.warn('WebGL unavailable, using a flat sky', err);
   document.body.style.background = 'radial-gradient(120% 70% at 50% 100%, #1d1a3f, #05060f)';
@@ -108,6 +114,7 @@ function setMode(mode) {
   if (state.mode === mode) return;
   state.mode = mode;
   document.body.dataset.mode = mode;
+  if (mode !== 'idle') openScenes(false);
   sceneDo((s) => s.setNight(mode === 'night'));
   if (mode === 'idle') sceneDo((s) => s.setLamp(1));
   if (mode === 'night') {
@@ -172,11 +179,62 @@ function turnOff(delay) {
   }
 }
 
+// ---------- Scenes ----------
+const sceneList = $('#sceneList');
+const sceneName = $('#sceneName');
+const sceneButtons = SCENES.map((s) => {
+  const b = document.createElement('button');
+  b.setAttribute('role', 'radio');
+  b.dataset.scene = s.id;
+  b.innerHTML = `<span class="name"></span><span class="desc"></span>
+    <svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
+  b.querySelector('.name').textContent = s.name;
+  b.querySelector('.desc').textContent = s.line;
+  b.addEventListener('click', () => pickScene(s.id));
+  sceneList.appendChild(b);
+  return b;
+});
+function showScene(id) {
+  sceneButtons.forEach((b) => {
+    const on = b.dataset.scene === id;
+    b.setAttribute('aria-checked', String(on));
+    b.tabIndex = on ? 0 : -1;
+  });
+  sceneName.textContent = sceneById(id).name;
+}
+function pickScene(id) {
+  if (id === sceneId) return;
+  sceneId = id;
+  showScene(id);
+  try { localStorage.setItem(SCENE_KEY, id); } catch { /* private mode: just this visit */ }
+  sceneDo((s) => s.setScene(id));
+}
+function openScenes(open) {
+  if (open) document.body.dataset.sheet = 'scenes';
+  else delete document.body.dataset.sheet;
+  if (open) sceneButtons.find((b) => b.getAttribute('aria-checked') === 'true')?.focus({ preventScroll: true });
+  else if (document.activeElement?.closest('.view-scenes')) $('#sceneBtn').focus({ preventScroll: true });
+}
+sceneList.addEventListener('keydown', (e) => {
+  const step = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0;
+  if (!step) return;
+  e.preventDefault();
+  const i = SCENES.findIndex((s) => s.id === sceneId);
+  const next = sceneButtons[(i + step + SCENES.length) % SCENES.length];
+  next.focus();
+  pickScene(next.dataset.scene);
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.dataset.sheet) openScenes(false); });
+showScene(sceneId);
+if (SCENES.length < 2 || !scene) $('#sceneBtn').hidden = true;
+
 const actions = {
   wake: () => run('/api/wake', {}, () => { setMode('idle'); say(state.dryRun ? 'Test mode: nothing changed.' : 'Screens woken.'); }),
   cancel: () => run('/api/cancel', {}, () => { setMode('idle'); say('Timer cancelled.'); }),
   now: () => turnOff(0),
   done: () => { setMode('idle'); say(''); },
+  scenes: () => openScenes(true),
+  closeScenes: () => openScenes(false),
 };
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-action]');

@@ -71,12 +71,12 @@ function fillWorstCase(doc) {
 }
 
 // Loads the app in an iframe of each size and reports layout problems in every mode.
-export async function audit(frame, devices = DEVICES, onResult = () => {}) {
+export async function audit(frame, devices = DEVICES, onResult = () => {}, scene = 'lake') {
   const results = [];
   for (const [name, w, h, safe] of devices) {
     frame.style.width = `${w}px`;
     frame.style.height = `${h}px`;
-    frame.src = `/?q=low&freeze=5&audit=${Math.random()}`;
+    frame.src = `/?q=low&freeze=5&scene=${encodeURIComponent(scene)}&audit=${Math.random()}`;
     await new Promise((r) => (frame.onload = r));
     const win = frame.contentWindow, doc = frame.contentDocument;
     for (let i = 0; i < 100 && !win.nightfall && !doc.body.style.background; i++) await sleep(50);
@@ -85,11 +85,11 @@ export async function audit(frame, devices = DEVICES, onResult = () => {}) {
     const style = doc.createElement('style');
     style.textContent = '*,*::before,*::after{transition:none!important;animation:none!important}';
     doc.head.appendChild(style);
-    const { CABIN } = await import('/gl/world.js');
     const issues = [];
     let cabin = '', layout = '';
-    for (const mode of ['idle', 'pending', 'night']) {
-      doc.body.dataset.mode = mode;
+    for (const mode of ['idle', 'pending', 'night', 'scenes']) {
+      doc.body.dataset.mode = mode === 'scenes' ? 'idle' : mode;
+      if (mode === 'scenes') doc.body.dataset.sheet = 'scenes';
       fillWorstCase(doc);
       win.dispatchEvent(new win.Event('resize'));
       await sleep(150);
@@ -136,7 +136,8 @@ export async function audit(frame, devices = DEVICES, onResult = () => {}) {
         cam.rotation.set(v.pitch, -v.yaw, 0);
         cam.updateMatrixWorld();
         layout = v.layout;
-        const p = cam.position.clone().set(CABIN.x, CABIN.y + 3, CABIN.z).project(cam);
+        const f = nf.world.focus;
+        const p = cam.position.clone().set(f.x, f.y + 3, f.z).project(cam);
         const sx = (p.x * 0.5 + 0.5) * W, sy = (0.5 - p.y * 0.5) * H;
         cabin = `${Math.round((sx / W) * 100)}%, ${Math.round((sy / H) * 100)}%`;
         const at = { left: sx - 12, right: sx + 12, top: sy - 12, bottom: sy + 12, width: 1 };
