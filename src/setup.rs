@@ -107,9 +107,37 @@ extern "system" {
     fn SendDlgItemMessageW(hwnd: HWND, id: i32, msg: u32, w: usize, l: isize) -> isize;
     fn SetFocus(hwnd: HWND) -> HWND;
     fn MessageBeep(kind: u32) -> BOOL;
+    fn FillRect(dc: isize, rect: *const RECT, brush: isize) -> i32;
+    fn GetSysColorBrush(index: i32) -> isize;
 }
 
 type DialogProc = unsafe extern "system" fn(HWND, u32, usize, isize) -> isize;
+
+#[link(name = "gdi32")]
+extern "system" {
+    fn GetStockObject(which: i32) -> isize;
+}
+
+#[repr(C)]
+struct RECT {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[repr(C)]
+struct DRAWITEMSTRUCT {
+    CtlType: u32,
+    CtlID: u32,
+    itemID: u32,
+    itemAction: u32,
+    itemState: u32,
+    hwndItem: HWND,
+    hDC: isize,
+    rcItem: RECT,
+    itemData: usize,
+}
 
 #[link(name = "ole32")]
 extern "system" {
@@ -488,6 +516,98 @@ fn ask_port(current: u16) -> Option<u16> {
     u16::try_from(r).ok().filter(|p| *p >= 1024)
 }
 
+const TAILSCALE_WINDOWS: &str = "https://tailscale.com/download/windows";
+const GET_WINDOWS: u16 = 120;
+const CODE_IPHONE: u16 = 121;
+const CODE_ANDROID: u16 = 122;
+
+fn tailscale_template() -> Template {
+    const TABSTOP: u32 = 0x0001_0000;
+    const SS_CENTER: u32 = 0x1;
+    const SS_OWNERDRAW: u32 = 0xD;
+    let mut t = Template::new("Nightfall", 8, (260, 218));
+    t.item(
+        0x82,
+        0xFFFF,
+        0,
+        (8, 8, 244, 26),
+        "Tailscale lets your phone reach this PC from anywhere, not just at home. Put it on both, and \
+         sign in with the same account on each.",
+    );
+    t.item(0x80, GET_WINDOWS, TABSTOP, (8, 38, 110, 14), "Get Tailscale for Windows");
+    t.item(0x82, 0xFFFF, 0, (8, 62, 244, 9), "On your phone, scan one with the camera:");
+    t.item(0x82, CODE_IPHONE, SS_OWNERDRAW, (14, 76, 110, 100), "");
+    t.item(0x82, CODE_ANDROID, SS_OWNERDRAW, (136, 76, 110, 100), "");
+    t.item(0x82, 0xFFFF, SS_CENTER, (14, 178, 110, 9), "iPhone: App Store");
+    t.item(0x82, 0xFFFF, SS_CENTER, (136, 178, 110, 9), "Android: Google Play");
+    t.item(0x80, 2, TABSTOP | 0x1, (202, 198, 50, 14), "Back"); // IDCANCEL, default button
+    t
+}
+
+/// Draw a QR code as square modules on white, with its 4-module quiet zone, centred in `r`.
+unsafe fn draw_code(dc: isize, r: &RECT, code: &[&str]) {
+    const COLOR_BTNFACE: i32 = 15;
+    const WHITE_BRUSH: i32 = 0;
+    const BLACK_BRUSH: i32 = 4;
+    FillRect(dc, r, GetSysColorBrush(COLOR_BTNFACE));
+    let n = code.len() as i32;
+    let (w, h) = (r.right - r.left, r.bottom - r.top);
+    let module = (w.min(h) / (n + 8)).max(1);
+    let side = module * (n + 8);
+    let (x0, y0) = (r.left + (w - side) / 2, r.top + (h - side) / 2);
+    FillRect(dc, &RECT { left: x0, top: y0, right: x0 + side, bottom: y0 + side }, GetStockObject(WHITE_BRUSH));
+    let black = GetStockObject(BLACK_BRUSH);
+    for (y, row) in code.iter().enumerate() {
+        for (x, c) in row.bytes().enumerate() {
+            if c == b'#' {
+                let left = x0 + (x as i32 + 4) * module;
+                let top = y0 + (y as i32 + 4) * module;
+                FillRect(dc, &RECT { left, top, right: left + module, bottom: top + module }, black);
+            }
+        }
+    }
+}
+
+unsafe extern "system" fn tailscale_dialog_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize {
+    const WM_INITDIALOG: u32 = 0x110;
+    const WM_COMMAND: u32 = 0x111;
+    const WM_DRAWITEM: u32 = 0x2B;
+    match msg {
+        WM_INITDIALOG => {
+            set_window_icons(hwnd);
+            1
+        }
+        WM_COMMAND => match (w & 0xFFFF) as u16 {
+            GET_WINDOWS => {
+                ShellExecuteW(hwnd, wide("open").as_ptr(), wide(TAILSCALE_WINDOWS).as_ptr(), null(), null(), 1);
+                1
+            }
+            2 => {
+                EndDialog(hwnd, 0);
+                1
+            }
+            _ => 0,
+        },
+        WM_DRAWITEM => {
+            let item = &*(l as *const DRAWITEMSTRUCT);
+            let code = match item.CtlID as u16 {
+                CODE_IPHONE => crate::qr::APP_STORE,
+                CODE_ANDROID => crate::qr::GOOGLE_PLAY,
+                _ => return 0,
+            };
+            draw_code(item.hDC, &item.rcItem, code);
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// The Get Tailscale window: a download button for this PC and store codes for the phone.
+fn get_tailscale() {
+    let template = tailscale_template().aligned();
+    unsafe { DialogBoxIndirectParamW(GetModuleHandleW(null()), template.as_ptr().cast(), 0, tailscale_dialog_proc, 0) };
+}
+
 // --- Where things are ----------------------------------------------------------------
 
 struct Installed {
@@ -631,14 +751,14 @@ fn tailscale(port: u16) -> Tailscale {
 }
 
 /// Where to open Nightfall on the phone, as dialog text with links.
-fn where_to_open(port: u16) -> String {
+fn where_to_open(port: u16, ts: &Tailscale) -> String {
     let lan = lan_address();
     let mut text = match lan {
         Some(ip) => format!("On your phone, open\n{}", link(&format!("http://{ip}:{port}"))),
         None => "This PC doesn't seem to be on a home network right now.".to_string(),
     };
-    match tailscale(port) {
-        Tailscale::Ready(url) => text += &format!("\n\nAway from home, with Tailscale:\n{}", link(&url)),
+    match ts {
+        Tailscale::Ready(url) => text += &format!("\n\nAway from home, with Tailscale:\n{}", link(url)),
         Tailscale::NeedsServe => {
             text += &format!(
                 "\n\nTo reach it away from home over Tailscale, run this once in a terminal:\ntailscale serve --bg --https={port} http://127.0.0.1:{port}"
@@ -939,6 +1059,24 @@ const STOP: i32 = 111;
 const START: i32 = 112;
 const CHANGE_PORT: i32 = 113;
 const REMOVE: i32 = 114;
+const AWAY: i32 = 115;
+
+/// The manage window's buttons; Get Tailscale only when this PC doesn't have it.
+fn manage_buttons<'a>(running: bool, ts: &Tailscale, port_button: &'a str) -> Vec<(i32, &'a str)> {
+    let mut buttons = Vec::new();
+    if running {
+        buttons.push((OPEN, "Open Nightfall here\nIn this PC's browser"));
+        buttons.push((STOP, "Stop Nightfall\nUntil you start it here, or sign in again"));
+    } else {
+        buttons.push((START, "Start Nightfall"));
+    }
+    if matches!(ts, Tailscale::Absent) {
+        buttons.push((AWAY, "Use it away from home\nGet Tailscale on this PC and your phone"));
+    }
+    buttons.push((CHANGE_PORT, port_button));
+    buttons.push((REMOVE, "Remove Nightfall\nThe program, its sign-in task and firewall rule"));
+    buttons
+}
 
 /// The manage window: is it running, where to open it, and what you can do with it. It comes
 /// back after each action until it's closed.
@@ -951,8 +1089,9 @@ fn manage(mut port: u16, mut just_installed: bool) -> i32 {
             (false, _) => "Nightfall isn't running",
         };
         just_installed = false;
+        let ts = tailscale(port);
         let content = if running {
-            where_to_open(port)
+            where_to_open(port, &ts)
         } else {
             let logs = std::env::var("LOCALAPPDATA").map(|d| format!("{d}\\Nightfall\\logs")).unwrap_or_default();
             format!(
@@ -962,15 +1101,7 @@ fn manage(mut port: u16, mut just_installed: bool) -> i32 {
             )
         };
         let port_button = format!("Change the port\nIt's {port} now");
-        let mut buttons: Vec<(i32, &str)> = Vec::new();
-        if running {
-            buttons.push((OPEN, "Open Nightfall here\nIn this PC's browser"));
-            buttons.push((STOP, "Stop Nightfall\nUntil you start it here, or sign in again"));
-        } else {
-            buttons.push((START, "Start Nightfall"));
-        }
-        buttons.push((CHANGE_PORT, &port_button));
-        buttons.push((REMOVE, "Remove Nightfall\nThe program, its sign-in task and firewall rule"));
+        let buttons = manage_buttons(running, &ts, &port_button);
         let choice = show(&Dialog {
             instruction,
             content: &content,
@@ -998,6 +1129,7 @@ fn manage(mut port: u16, mut just_installed: bool) -> i32 {
                 }
                 wait_for_server(port, Duration::from_secs(10));
             }
+            AWAY => get_tailscale(),
             CHANGE_PORT => {
                 if let Some(new) = change_port(port) {
                     port = new;
@@ -1176,6 +1308,15 @@ mod tests {
         assert_eq!(t.aligned().len() * 2, t.0.len().div_ceil(2) * 2);
     }
 
+    #[test]
+    fn tailscale_dialog_template_is_laid_out_for_windows() {
+        let t = tailscale_template();
+        assert_eq!(t.0[4], 8, "item count");
+        let starts: Vec<usize> = (0..t.0.len() - 1).filter(|&i| t.0[i + 1] >> 12 == 5).collect();
+        assert_eq!(starts.len(), 8);
+        assert!(starts.iter().all(|i| i % 2 == 0));
+    }
+
     /// Writes a Start menu style shortcut to the temp folder and checks it's a .lnk file.
     #[test]
     fn shortcut_is_written() {
@@ -1236,6 +1377,25 @@ mod tests {
     #[ignore]
     fn manage_window() {
         manage(installed().map_or(DEFAULT_PORT, |i| i.port), false);
+    }
+
+    #[test]
+    fn away_from_home_is_offered_only_without_tailscale() {
+        for running in [true, false] {
+            let ids = |ts: Tailscale| manage_buttons(running, &ts, "port").iter().map(|b| b.0).collect::<Vec<_>>();
+            let absent = ids(Tailscale::Absent);
+            let at = absent.iter().position(|&id| id == AWAY).expect("offered without Tailscale");
+            assert_eq!(absent[at + 1], CHANGE_PORT);
+            assert!(!ids(Tailscale::NeedsServe).contains(&AWAY));
+            assert!(!ids(Tailscale::Ready("https://pc.example.ts.net:39847".into())).contains(&AWAY));
+        }
+    }
+
+    /// Shows the Get Tailscale window, to look at. `cargo test -- --ignored tailscale_window`
+    #[test]
+    #[ignore]
+    fn tailscale_window() {
+        get_tailscale();
     }
 
     /// Shows the port window, to look at. `cargo test -- --ignored port_window`

@@ -18,6 +18,7 @@ mod guard;
 mod http;
 mod json;
 mod log;
+mod qr;
 mod setup;
 mod tls;
 mod win;
