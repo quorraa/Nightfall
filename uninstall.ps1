@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# Removes the Nightfall logon task and firewall rule. Leaves this folder alone.
+# Removes the Nightfall logon task (stopping nightfall.exe) and firewall rule. Leaves this folder alone.
 param([int]$Port = 39847)
 $ErrorActionPreference = 'Stop'
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()

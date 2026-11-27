@@ -20,8 +20,11 @@ stay connected, and wake on any mouse or keyboard input.
   <img src="docs/media/desktop-night.jpg" alt="In a desktop browser, after lights out" width="380">
 </p>
 
-Requirements: Windows 10 or 11 and Python 3.9 or newer, with `pythonw.exe` on your PATH. No packages
-to install. `install.ps1` prints both addresses below when it finishes.
+Requirements: Windows 10 or 11. Nightfall is one small `nightfall.exe` with the page built in;
+there is no runtime to install. Get it from the
+[latest release](https://github.com/quorraa/Nightfall/releases/latest) along with the two install
+scripts, or build it from this repository with [Rust](https://rustup.rs) (`install.ps1` builds
+it for you when it finds Cargo). `install.ps1` prints both addresses below when it finishes.
 
 - Port **39847**, chosen to stay clear of common ports (Sunshine uses 47984–48010).
 - Home network: `http://<your-pc-ip>:39847`
@@ -33,17 +36,25 @@ to install. `install.ps1` prints both addresses below when it finishes.
 ## Run
 
 ```powershell
-.\install.ps1     # logon task (windowless, auto-restart) + LAN firewall rule; asks for UAC once
+.\install.ps1     # logon task (no window, auto-restart) + LAN firewall rule; asks for UAC once
 .\uninstall.ps1   # removes both
 ```
 
+Run `install.ps1` again after updating; it replaces the task, the rule and the .exe.
+
 To try it without touching the screens, run a test copy on port 39848 next to the real one:
-`$env:NIGHTFALL_DRY_RUN='1'; $env:NIGHTFALL_PORT='39848'; python server.py`
+`.\nightfall.exe --port 39848 --dry-run`
+
+To build by hand: `cargo build --release`, then copy `target\release\nightfall.exe` next to
+`install.ps1`. `cargo test` runs the unit tests; `cargo test -- --ignored raw_input` also checks
+that raw mouse input arrives (it moves the pointer 3 px and back).
 
 ## How it works
 
-- `server.py` is Python standard library only. It runs in your desktop session because a Windows
-  service lives in session 0 and can't reach the monitors.
+- `nightfall.exe` is written in Rust (`src/`) with no crates: just the standard library and Windows
+  itself. It runs in your desktop session because a Windows service lives in session 0 and can't
+  reach the monitors. It serves `web/` from next to the .exe when that folder is there, and the
+  copy built into the .exe otherwise.
   - `GET /api/status`
   - `POST /api/dim {"delay": seconds}`: 0 means now, up to 6 h
   - `POST /api/cancel`
@@ -58,17 +69,30 @@ To try it without touching the screens, run a test copy on port 39848 next to th
   wakes them at once, and so does any input it can't see.
 - Only loopback, private LAN and Tailscale addresses get an answer. POSTs must be JSON and same-origin, so
   another website open in a browser can't trigger them.
-- `web/` is the page. The cabin's lamp is the state of your screens: dragging the slider dims it, a
+- `web/` is the page. A light in the scene stands for your screens: dragging the slider dims it, a
   timer burns it down, lights-out switches it off, and over the next half minute more stars and the
-  Milky Way come out as your eyes adjust, a shooting star crosses, and an aurora rises behind the peaks.
-- Log: `logs/nightfall.log`
+  Milky Way come out as your eyes adjust and a shooting star crosses.
+- Log: `logs/nightfall.log` next to the .exe.
+- Options: `--port N` (or `NIGHTFALL_PORT`), `--dry-run` (or `NIGHTFALL_DRY_RUN=1`) to log
+  instead of acting, `NIGHTFALL_WEB=<folder>` to serve the page from another folder.
 
-## The scene
+## The scenes
+
+Pick one from the button beside "Wake screens"; the phone remembers it.
+
+- **Lake**: a cabin across still water under the peaks, with fireflies and an aurora after lights-out.
+- **Lighthouse**: a beam turning through the sea haze from a point across a bay, a keeper's cottage,
+  a long swell running up the shingle.
+- **Desert**: a lantern-lit bell tent in the hollow of the dunes, with embers in a fire ring and
+  mesas on the horizon.
 
 three.js r185 (vendored in `web/vendor`), WebGL2, every shader hand-written.
 
-- `web/scene.js`: camera framing for portrait, phone-landscape and desktop; the lights-out
-  choreography; an adaptive pixel budget that lowers resolution if frames get slow; 30 fps at night.
+- `web/scene.js`: loads the chosen scene and fades between them; camera framing for portrait,
+  phone-landscape and desktop; the lights-out choreography; an adaptive pixel budget that lowers
+  resolution if frames get slow; 30 fps at night.
+- `web/scenes/`: one module per scene (`index.js` lists them); each builds its own land, water or
+  sand and says where its light is.
 - `web/gl/sky.js`: sky dome, a Milky Way baked once into a texture, 22k stars, a crescent moon with
   earthshine, aurora, shooting stars (built on the CPU so nothing can divide by zero on the GPU).
 - `web/gl/land.js`: polar terrain with snow and rock, about 7,500 instanced spruce, fir and pine in
@@ -79,20 +103,21 @@ three.js r185 (vendored in `web/vendor`), WebGL2, every shader hand-written.
   mapping, vignette, dither.
 
 Debug URL options: `?seed=N`, `?freeze=SECONDS`, `?night=1`, `?q=low`, `?msaa=0`, `?fps`,
-`?debug=nopost|bloom|refl|water|forest`, `?capture`.
+`?scene=lake|coast|dunes`, `?debug=nopost|bloom|refl|water|forest`, `?capture`.
 
 ### Devices
 
 The layout is checked on 47 screen sizes, from a 280 px folding-phone cover screen through every
 current iPhone, Pixel and Galaxy size, foldables and iPads in both orientations, to laptops,
 1080p, 1440p, ultrawide and 4K monitors. With a test server running, open
-`http://127.0.0.1:39848/dev/devices.html`. It loads the page at each size with the longest text it
-can show (a long PC name, an error message) and that device's notch and home-bar insets, in all
-three modes, and lists anything off screen, clipped, overlapping, under the notch, too small to
-tap, or hiding the cabin.
+`http://127.0.0.1:39848/dev/devices.html` (add `?scene=coast` or `?scene=dunes` for the others).
+It loads the page at each size with the longest text it can show (a long PC name, an error message)
+and that device's notch and home-bar insets, in every mode and with the scene sheet open, and lists
+anything off screen, clipped, overlapping, under the notch, too small to tap, or hiding the light.
 
-`tools/capture.py` records the GIFs and pictures above with headless Chromium (see the top of
-the file).
+`tools/capture.py` records the GIFs and pictures above, and `tools/shot.py` takes screenshots, with
+headless Chromium through Playwright for Python. They're development tools; Nightfall itself
+doesn't need Python.
 
 ## License
 
