@@ -17,6 +17,7 @@ mod guard;
 mod http;
 mod json;
 mod log;
+mod setup;
 mod win;
 
 use std::path::PathBuf;
@@ -37,6 +38,13 @@ pub fn cfg() -> &'static Config {
 }
 
 fn main() {
+    // Serving is what the sign-in task (and a test copy) asks for; anything else is the
+    // installer: double-clicking the .exe, or Settings › Apps removing it.
+    let serve = std::env::args().skip(1).any(|a| matches!(a.as_str(), "--serve" | "--port" | "--dry-run"));
+    if !serve {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        std::process::exit(setup::main(&args));
+    }
     let here = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(PathBuf::from))

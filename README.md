@@ -22,9 +22,8 @@ stay connected, and wake on any mouse or keyboard input.
 
 Requirements: Windows 10 or 11. Nightfall is one small `nightfall.exe` with the page built in;
 there is no runtime to install. Get it from the
-[latest release](https://github.com/quorraa/Nightfall/releases/latest) along with the two install
-scripts, or build it from this repository with [Rust](https://rustup.rs) (`install.ps1` builds
-it for you when it finds Cargo). `install.ps1` prints both addresses below when it finishes.
+[latest release](https://github.com/quorraa/Nightfall/releases/latest), or build it from this
+repository with [Rust](https://rustup.rs). When it's installed it shows both addresses below.
 
 - Port **39847**, chosen to stay clear of common ports (Sunshine uses 47984–48010).
 - Home network: `http://<your-pc-ip>:39847`
@@ -33,21 +32,29 @@ it for you when it finds Cargo). `install.ps1` prints both addresses below when 
   `tailscale serve --bg --https=39847 http://127.0.0.1:39847`
 - On iPhone: open the Tailscale URL in Safari → Share → Add to Home Screen.
 
-## Run
+## Install
 
-```powershell
-.\install.ps1     # logon task (no window, auto-restart) + LAN firewall rule; asks for UAC once
-.\uninstall.ps1   # removes both
-```
+Double-click `nightfall.exe` and choose **Install**. Windows asks once for permission (UAC), then
+Nightfall:
 
-Run `install.ps1` again after updating; it replaces the task, the rule and the .exe.
+- copies itself to `C:\Program Files\Nightfall`,
+- adds a sign-in task that starts it with no window and restarts it if it stops,
+- opens port 39847 in Windows Firewall for your home network only,
+- adds itself to **Settings › Apps**, which is where you remove it.
+
+Opening `nightfall.exe` again shows whether it's running and its addresses. Opening a newer
+version offers to update. To install on another port: `.\nightfall.exe --install 40000`.
 
 To try it without touching the screens, run a test copy on port 39848 next to the real one:
 `.\nightfall.exe --port 39848 --dry-run`
 
-To build by hand: `cargo build --release`, then copy `target\release\nightfall.exe` next to
-`install.ps1`. `cargo test` runs the unit tests; `cargo test -- --ignored raw_input` also checks
-that raw mouse input arrives (it moves the pointer 3 px and back).
+## Build
+
+`cargo build --release` makes `target\release\nightfall.exe`. `cargo test` runs the unit tests;
+`cargo test -- --ignored raw_input` also checks that raw mouse input arrives (it moves the pointer
+3 px and back), and `cargo test -- --ignored task_scheduler` checks that Task Scheduler accepts the
+sign-in task (it adds a test task and deletes it). `tools/make_icon.py` draws the icons in
+`assets/` and `web/icon-180.png`.
 
 ## How it works
 
@@ -72,7 +79,8 @@ that raw mouse input arrives (it moves the pointer 3 px and back).
 - `web/` is the page. A light in the scene stands for your screens: dragging the slider dims it, a
   timer burns it down, lights-out switches it off, and over the next half minute more stars and the
   Milky Way come out as your eyes adjust and a shooting star crosses.
-- Log: `logs/nightfall.log` next to the .exe.
+- Log: `logs\nightfall.log` next to the .exe, or `%LOCALAPPDATA%\Nightfall\logs` when that
+  folder can't be written (as in Program Files).
 - Options: `--port N` (or `NIGHTFALL_PORT`), `--dry-run` (or `NIGHTFALL_DRY_RUN=1`) to log
   instead of acting, `NIGHTFALL_WEB=<folder>` to serve the page from another folder.
 

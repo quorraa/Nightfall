@@ -1,11 +1,18 @@
-"""Draw web/icon-180.png (crescent on a night gradient) with no image library."""
+"""Draw the app icon (crescent on a night gradient) with no image library.
+
+    web/icon-180.png        the phone's home-screen icon: a full square (iOS rounds it)
+    assets/icon-<N>.png     the Windows icon at each size it is shown at, with rounded
+                            corners; build.rs puts these into nightfall.exe
+"""
 
 import math
 import struct
 import zlib
 from pathlib import Path
 
-SIZE, SS = 180, 4  # 4x4 supersampling
+SS = 4  # 4x4 supersampling
+ROOT = Path(__file__).resolve().parent.parent
+WINDOWS_SIZES = (16, 20, 24, 32, 40, 48, 64, 256)
 
 
 def mix(a, b, t):
@@ -35,26 +42,55 @@ def shade(x, y):
     return col
 
 
-def main():
+def inside_rounded(x, y, inset, radius):
+    """Is (x, y) inside a rounded square inset from the unit square's edges?"""
+    lo, hi = inset + radius, 1 - inset - radius
+    dx = max(lo - x, 0, x - hi)
+    dy = max(lo - y, 0, y - hi)
+    return math.hypot(dx, dy) <= radius
+
+
+def render(size, rounded):
+    # Small icons keep the shape nearly full size so the crescent stays readable.
+    inset = 0.0 if size <= 24 else 0.03
+    radius = 0.2
     rows = bytearray()
-    for py in range(SIZE):
+    for py in range(size):
         rows.append(0)
-        for px in range(SIZE):
-            acc = [0.0, 0.0, 0.0]
+        for px in range(size):
+            acc, cover = [0.0, 0.0, 0.0], 0
             for j in range(SS):
                 for i in range(SS):
-                    c = shade((px + (i + 0.5) / SS) / SIZE, (py + (j + 0.5) / SS) / SIZE)
-                    acc = [a + v for a, v in zip(acc, c)]
-            rows.extend(int(max(0, min(1, a / SS / SS)) ** (1 / 1.0) * 255 + 0.5) for a in acc)
+                    x, y = (px + (i + 0.5) / SS) / size, (py + (j + 0.5) / SS) / size
+                    if rounded and not inside_rounded(x, y, inset, radius):
+                        continue
+                    # Shade in the shape's own coordinates so the art fills it.
+                    u = (x - inset) / (1 - 2 * inset) if rounded else x
+                    v = (y - inset) / (1 - 2 * inset) if rounded else y
+                    acc = [a + c for a, c in zip(acc, shade(u, v))]
+                    cover += 1
+            rgb = [int(max(0, min(1, a / cover)) * 255 + 0.5) if cover else 0 for a in acc]
+            rows.extend(rgb)
+            if rounded:
+                rows.append(int(cover / SS / SS * 255 + 0.5))
 
     def chunk(tag, data):
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
-    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", SIZE, SIZE, 8, 2, 0, 0, 0))
-    png += chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b"")
-    out = Path(__file__).resolve().parent.parent / "web" / "icon-180.png"
-    out.write_bytes(png)
+    color_type = 6 if rounded else 2  # RGBA or RGB
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, color_type, 0, 0, 0))
+    return png + chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b"")
+
+
+def main():
+    out = ROOT / "web" / "icon-180.png"
+    out.write_bytes(render(180, rounded=False))
     print(out)
+    (ROOT / "assets").mkdir(exist_ok=True)
+    for size in WINDOWS_SIZES:
+        out = ROOT / "assets" / f"icon-{size}.png"
+        out.write_bytes(render(size, rounded=True))
+        print(out)
 
 
 if __name__ == "__main__":
